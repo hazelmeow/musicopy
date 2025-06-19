@@ -1,30 +1,26 @@
-use crate::clone;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use dioxus::signals::{SyncSignal, Writable};
-use futures::StreamExt;
-use iroh::{protocol::Router, Endpoint, PublicKey};
-use iroh_blobs::{
-    format::collection::Collection,
-    net_protocol::{Blobs, DownloadMode},
-    rpc::client::blobs::{DownloadOptions, WrapOption},
-    store::{ExportFormat, ExportMode, ImportMode, Store},
-    ticket::BlobTicket,
-    util::{progress::IgnoreProgressSender, SetTagOption},
-    BlobFormat,
+use iroh::{
+    protocol::{ProtocolHandler, Router},
+    Endpoint, NodeAddr, PublicKey,
 };
+use n0_future::future::Boxed;
+use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 
 #[derive(Debug, Clone)]
 pub struct ProtocolState {
     pub node_id: PublicKey,
     pub relay_url: String,
     pub library: Arc<Vec<String>>,
-    pub ticket: Option<BlobTicket>,
 }
 
 /// Cloneable handle to the protocol.
@@ -42,7 +38,7 @@ impl ProtocolHandle {
 #[derive(Debug, Clone)]
 pub enum ProtocolCommand {
     Scan(Vec<String>),
-    Download(BlobTicket, PathBuf),
+    Download(NodeAddr, PathBuf),
     Shutdown,
 }
 
@@ -78,30 +74,29 @@ struct ProtocolThread {
     signal: Mutex<SyncSignal<Option<ProtocolState>>>,
 
     router: Router,
-    blobs: Blobs<iroh_blobs::store::mem::Store>,
-
-    library: ArcSwap<Vec<String>>,
-    ticket: Mutex<Option<BlobTicket>>,
+    protocol: Protocol,
+    library: Arc<ArcSwap<Vec<String>>>,
 }
 
 impl ProtocolThread {
     async fn new(signal: SyncSignal<Option<ProtocolState>>) -> anyhow::Result<Arc<Self>> {
         let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-        let blobs = Blobs::memory().build(&endpoint);
+        let library = Arc::new(ArcSwap::new(Arc::new(Vec::new())));
+
+        let protocol = Protocol::new(library.clone());
 
         let router = Router::builder(endpoint)
-            .accept(iroh_blobs::ALPN, blobs.clone())
+            .accept(Protocol::ALPN, protocol.clone())
             .spawn();
 
         let protocol = Arc::new(Self {
             signal: Mutex::new(signal),
 
             router,
-            blobs,
+            protocol,
 
-            library: ArcSwap::new(Arc::new(Vec::new())),
-            ticket: Mutex::new(None),
+            library,
         });
         protocol.notify_state();
 
@@ -124,10 +119,10 @@ impl ProtocolThread {
                                 }
                             });
                         }
-                        ProtocolCommand::Download(ticket, destination) => {
+                        ProtocolCommand::Download(addr, destination) => {
                             let protocol = self.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = protocol.download(ticket, destination).await {
+                                if let Err(e) = protocol.download(addr, destination).await {
                                     println!("error downloading: {e:#}");
                                 }
                             });
@@ -172,58 +167,12 @@ impl ProtocolThread {
             }
         }
 
-        let library_strings = library.iter().map(|(name, _)| name.clone()).collect();
+        // let library_strings = library.iter().map(|(name, _)| name.clone()).collect();
+        let library_strings = library
+            .iter()
+            .map(|(_, path)| path.to_string_lossy().to_string())
+            .collect();
         self.library.store(Arc::new(library_strings));
-
-        let db = self.blobs.store();
-
-        // import all the files, using num_cpus workers, return names and temp tags
-        let mut names_and_tags = futures::stream::iter(library)
-            .map(|(name, path)| {
-                clone!(db);
-                async move {
-                    let (temp_tag, file_size) = db
-                        .import_file(
-                            path,
-                            ImportMode::TryReference,
-                            BlobFormat::Raw,
-                            IgnoreProgressSender::default(),
-                        )
-                        .await?;
-                    anyhow::Ok((name, temp_tag, file_size))
-                }
-            })
-            // .buffer_unordered(num_cpus::get()) // TODO: multithread protocol
-            .buffer_unordered(1)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        names_and_tags.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
-
-        // total size
-        let size = names_and_tags.iter().map(|(_, _, size)| *size).sum::<u64>();
-
-        // collect the (name, hash) tuples into a collection
-        // we must also keep the tags around so the data does not get gced.
-        let (collection, tags) = names_and_tags
-            .into_iter()
-            .map(|(name, tag, _)| ((name, *tag.hash()), tag))
-            .unzip::<_, _, Collection, Vec<_>>();
-        let temp_tag = collection.clone().store(db).await?;
-
-        // now that the collection is stored, we can drop the tags
-        // data is protected by the collection
-        drop(tags);
-
-        let node_id = self.router.endpoint().node_id();
-        let ticket = BlobTicket::new(node_id.into(), *temp_tag.hash(), temp_tag.format())?;
-
-        {
-            let mut ticket_mutex = self.ticket.lock().unwrap();
-            *ticket_mutex = Some(ticket);
-        }
 
         self.notify_state();
 
@@ -232,49 +181,190 @@ impl ProtocolThread {
 
     async fn download(
         self: &Arc<Self>,
-        ticket: BlobTicket,
+        addr: NodeAddr,
         destination: PathBuf,
     ) -> anyhow::Result<()> {
-        println!("downloading {ticket}");
+        println!("downloading from {addr:?}");
 
-        let blobs_client = self.blobs.client();
-        let progress = blobs_client
-            .download_with_opts(
-                ticket.hash(),
-                DownloadOptions {
-                    format: BlobFormat::HashSeq,
-                    nodes: vec![ticket.node_addr().clone()],
-                    tag: SetTagOption::Auto,
-                    mode: DownloadMode::Queued,
-                },
-            )
-            .await?;
-        progress.await?;
+        // connect to the remote node
+        let conn = self.router.endpoint().connect(addr, Protocol::ALPN).await?;
 
-        blobs_client
-            .export(
-                ticket.hash(),
-                destination,
-                ExportFormat::Collection,
-                ExportMode::TryReference,
-            )
-            .await?;
+        // accept a unidirectional stream
+        let mut recv = conn.accept_uni().await?;
+
+        // read index message
+        let index_message_len = recv.read_u32().await?;
+        let mut index_message_buf = vec![0; index_message_len as usize];
+        recv.read_exact(&mut index_message_buf)
+            .await
+            .context("failed to read index message")?;
+        let index_message: IndexMessage = postcard::from_bytes(&index_message_buf)
+            .context("failed to deserialize index message")?;
+
+        println!(
+            "received index message with {} files",
+            index_message.files.len()
+        );
+
+        // TODO: concurrent
+        for file in index_message.files {
+            println!("downloading file: {file}");
+
+            // open a bidirectional stream to send DownloadRequest
+            let (mut send, mut recv) = conn.open_bi().await?;
+            let download_request = DownloadRequest { file: file.clone() };
+            let download_request_buf = postcard::to_stdvec(&download_request)
+                .context("failed to serialize download request")?;
+            send.write_u32(download_request_buf.len() as u32)
+                .await
+                .context("failed to write download request length")?;
+            send.write_all(&download_request_buf)
+                .await
+                .context("failed to write download request")?;
+
+            println!("sent download request for {file}");
+
+            // receive file content
+            let file_content_len = recv.read_u32().await?;
+            let mut file_content_buf = vec![0; file_content_len as usize];
+            recv.read_exact(&mut file_content_buf)
+                .await
+                .context("failed to read file content")?;
+
+            let filename = file
+                .split('/')
+                .next_back()
+                .ok_or_else(|| anyhow::anyhow!("failed to extract filename from path"))?
+                .to_string();
+
+            let file_path = destination.join(&filename);
+            if let Some(parent) = file_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .context("failed to create parent directory")?;
+            }
+
+            tokio::fs::write(&file_path, file_content_buf)
+                .await
+                .context("failed to write file content")?;
+
+            println!("saved file to {}", file_path.display());
+        }
+
+        // explicitly close the whole connection
+        conn.close(0u32.into(), b"bye!");
 
         Ok(())
     }
 
     fn notify_state(self: &Arc<Self>) {
-        let ticket = {
-            let ticket = self.ticket.lock().unwrap();
-            ticket.clone()
-        };
-
         let mut signal = self.signal.lock().unwrap();
         signal.set(Some(ProtocolState {
             node_id: self.router.endpoint().node_id(),
             relay_url: format!("{:?}", self.router.endpoint().home_relay().get()),
             library: self.library.load_full(),
-            ticket,
         }));
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexMessage {
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadRequest {
+    pub file: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Protocol {
+    library: Arc<ArcSwap<Vec<String>>>,
+}
+
+impl Protocol {
+    pub const ALPN: &[u8] = b"musicopy/0";
+
+    pub fn new(library: Arc<ArcSwap<Vec<String>>>) -> Self {
+        Self { library }
+    }
+}
+
+impl ProtocolHandler for Protocol {
+    fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
+        let library = self.library.load_full();
+
+        Box::pin(async move {
+            // We can get the remote's node id from the connection.
+            let node_id = connection.remote_node_id()?;
+            println!("accepted connection from {node_id}");
+
+            // open a unidirectional stream to send IndexMessage
+            let mut send = connection.open_uni().await?;
+
+            let index_message = IndexMessage {
+                files: library.to_vec(),
+            };
+            let index_message_buf =
+                postcard::to_stdvec(&index_message).context("failed to serialize index message")?;
+            send.write_u32(index_message_buf.len() as u32)
+                .await
+                .context("failed to write index message length")?;
+            send.write_all(&index_message_buf)
+                .await
+                .context("failed to write index message")?;
+
+            loop {
+                tokio::select! {
+                    _ = connection.closed() => {
+                        println!("connection closed");
+                        break;
+                    }
+
+                    accept_result = connection.accept_bi() => {
+                        match accept_result {
+                            Ok((mut send, mut recv)) => {
+                                // receive download request
+                                let download_req_len = recv.read_u32().await?;
+                                let mut download_req_buf = vec![0; download_req_len as usize];
+                                recv
+                                    .read_exact(&mut download_req_buf)
+                                    .await
+                                    .context("failed to read download request")?;
+                                let download_req: DownloadRequest =
+                                    postcard::from_bytes(&download_req_buf).context("failed to deserialize download request")?;
+
+                                println!("received download request for {}", download_req.file);
+
+                                if let Some(file) = library.iter().find(|f| f == &&download_req.file) {
+                                    // send file content
+                                    let file_path = PathBuf::from(file);
+                                    if file_path.exists() {
+                                        let file_content = tokio::fs::read(file_path).await?;
+                                        send.write_u32(file_content.len() as u32).await?;
+                                        send.write_all(&file_content).await?;
+                                    } else {
+                                        anyhow::bail!("file not found")
+                                    }
+                                } else {
+                                    anyhow::bail!("file not found in index")
+                                };
+
+                                println!("finished sending file content for {}", download_req.file);
+                            }
+
+                            Err(e) => {
+                                println!("accept_bi error: {e}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            println!("connection to {node_id} finished");
+
+            Ok(())
+        })
     }
 }

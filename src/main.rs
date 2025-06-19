@@ -2,6 +2,7 @@ pub(crate) mod protocol;
 
 use crate::protocol::{start_node, ProtocolCommand, ProtocolHandle};
 use dioxus::prelude::*;
+use iroh::NodeAddr;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -67,27 +68,17 @@ fn Home() -> Element {
     let handle = use_hook(|| start_node(signal));
     use_context_provider(|| ReadOnlySignal::new(Signal::new(handle)));
 
-    let ticket = signal
-        .read()
-        .as_ref()
-        .and_then(|s| s.ticket.as_ref())
-        .map(|t| t.to_string());
-
     rsx! {
         // button { onclick: move |_| handle.send(ProtocolCommand::Increment), "Increase" }
         "{signal:?}"
         Connect {}
         Library {}
-
-        if let Some(ticket) = ticket {
-            h1 { "Ticket: {ticket}" }
-        }
     }
 }
 
 #[component]
 fn Connect() -> Element {
-    let mut ticket = use_signal(String::new);
+    let mut node_id = use_signal(String::new);
     let mut destination = use_signal(String::new);
 
     let handle = use_context::<ReadOnlySignal<ProtocolHandle>>();
@@ -113,28 +104,29 @@ fn Connect() -> Element {
             }
             input {
                 r#type: "text",
-                value: "{ticket}",
-                oninput: move |evt| ticket.set(evt.value().clone()),
-                placeholder: "Ticket",
+                value: "{node_id}",
+                oninput: move |evt| node_id.set(evt.value().clone()),
+                placeholder: "Node ID",
             }
             button {
                 onclick: move |_| {
-                    println!("Connecting to {}", ticket());
+                    println!("Connecting to {}", node_id());
 
-                    if ticket.read().is_empty() {
+                    if node_id.read().is_empty() {
                         return;
                     }
 
-                    let Ok(ticket) = ticket.read().parse() else {
-                        println!("failed to parse ticket");
+                    let Ok(node_id) = node_id.read().parse() else {
+                        println!("failed to parse node id");
                         return;
                     };
+                    let addr = NodeAddr::new(node_id);
                     let Ok(destination) = destination.read().parse() else {
                         println!("failed to parse destination");
                         return;
                     };
 
-                    handle.read().send(ProtocolCommand::Download(ticket, destination));
+                    handle.read().send(ProtocolCommand::Download(addr, destination));
                 },
                 "Connect"
             }
