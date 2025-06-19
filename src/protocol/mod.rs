@@ -1,3 +1,6 @@
+pub(crate) mod database;
+
+use crate::protocol::database::Database;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use dioxus::signals::{SyncSignal, Writable};
@@ -5,10 +8,11 @@ use iroh::{
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeAddr, PublicKey,
 };
+use itertools::Itertools;
 use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -20,6 +24,7 @@ use tokio::{
 pub struct ProtocolState {
     pub node_id: PublicKey,
     pub relay_url: String,
+    pub local_roots: Vec<String>,
     pub library: Arc<Vec<String>>,
 }
 
@@ -37,8 +42,12 @@ impl ProtocolHandle {
 
 #[derive(Debug, Clone)]
 pub enum ProtocolCommand {
-    Scan(Vec<String>),
+    AddRoots(Vec<String>),
+    RemoveRoot(String),
+    Rescan,
+
     Download(NodeAddr, PathBuf),
+
     Shutdown,
 }
 
@@ -76,10 +85,14 @@ struct ProtocolThread {
     router: Router,
     protocol: Protocol,
     library: Arc<ArcSwap<Vec<String>>>,
+
+    db: Mutex<Database>,
 }
 
 impl ProtocolThread {
     async fn new(signal: SyncSignal<Option<ProtocolState>>) -> anyhow::Result<Arc<Self>> {
+        let db = Mutex::new(Database::open("musicopy.db").context("failed to open database")?);
+
         let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
         let library = Arc::new(ArcSwap::new(Arc::new(Vec::new())));
@@ -97,6 +110,8 @@ impl ProtocolThread {
             protocol,
 
             library,
+
+            db,
         });
         protocol.notify_state();
 
@@ -107,18 +122,43 @@ impl ProtocolThread {
         self: &Arc<Self>,
         mut rx: mpsc::UnboundedReceiver<ProtocolCommand>,
     ) -> anyhow::Result<()> {
+        self.spawn_scan();
+
         loop {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        ProtocolCommand::Scan(paths) => {
-                            let protocol = self.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = protocol.scan(paths).await {
-                                    println!("error scanning library: {e:#}");
+                        ProtocolCommand::AddRoots(roots) => {
+                            {
+                                let db = self.db.lock().unwrap();
+                                for root in roots {
+                                    let path = PathBuf::from(root);
+                                    let path = path.canonicalize().context("failed to canonicalize path")?;
+                                    db.add_local_root(&path.to_string_lossy()).context("failed to add local root")?;
                                 }
-                            });
+                            }
+
+                            self.notify_state();
+
+                            // rescan the library after adding roots
+                            self.spawn_scan();
                         }
+                        ProtocolCommand::RemoveRoot(path) => {
+                            let path = PathBuf::from(path);
+                            let path = path.canonicalize().context("failed to canonicalize path")?;
+                            {
+                                let db = self.db.lock().unwrap();
+                                db.remove_local_root(&path.to_string_lossy()).context("failed to remove local root")?;
+                            }
+
+                            // TODO: remove files from root
+
+                            self.notify_state();
+                        }
+                        ProtocolCommand::Rescan => {
+                            self.spawn_scan();
+                        }
+
                         ProtocolCommand::Download(addr, destination) => {
                             let protocol = self.clone();
                             tokio::spawn(async move {
@@ -127,6 +167,7 @@ impl ProtocolThread {
                                 }
                             });
                         }
+
                         ProtocolCommand::Shutdown => {
                             break;
                         }
@@ -140,39 +181,111 @@ impl ProtocolThread {
         Ok(())
     }
 
-    async fn scan(self: &Arc<Self>, paths: Vec<String>) -> anyhow::Result<()> {
-        let mut library = Vec::new();
-
-        for root in paths {
-            let root = root.parse::<PathBuf>().context("failed to parse path")?;
-
-            anyhow::ensure!(root.exists(), "root {} does not exist", root.display());
-
-            let walker =
-                globwalk::GlobWalkerBuilder::new(&root, "*.{mp3,flac,ogg,m4a,wav,aif,aiff}")
-                    .build()
-                    .expect("glob shouldn't fail")
-                    .filter_map(Result::ok);
-
-            for entry in walker {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-
-                let path = entry.into_path();
-
-                let name = path.strip_prefix(&root)?.to_string_lossy().into_owned();
-
-                library.push((name, path));
+    fn spawn_scan(self: &Arc<Self>) {
+        let protocol = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = protocol.scan().await {
+                println!("error scanning library: {e:#}");
             }
+        });
+    }
+
+    // TODO: stream results asynchronously? scanning the fs is fast but transcoding is slow,
+    // so when do we do that?
+    async fn scan(self: &Arc<Self>) -> anyhow::Result<()> {
+        // TODO: lock so only one scan is running at a time
+
+        let mut errors = Vec::new();
+
+        let (roots, prev_local_files) = {
+            let db = self.db.lock().unwrap();
+            let roots = db.get_local_roots().context("failed to get local roots")?;
+            let local_files = db.get_local_files().context("failed to get local files")?;
+            (roots, local_files)
+        };
+
+        // remove roots that don't exist
+        let roots = roots
+            .into_iter()
+            .filter_map(|root| {
+                let path = PathBuf::from(root);
+                if path.exists() {
+                    Some(path)
+                } else {
+                    errors.push(anyhow::anyhow!(
+                        "root path `{}` does not exist",
+                        path.display()
+                    ));
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // walk roots and collect entries
+        let (entries, walk_errors): (Vec<_>, Vec<_>) = roots
+            .iter()
+            .flat_map(|root_path| {
+                let walker = globwalk::GlobWalkerBuilder::new(
+                    root_path,
+                    "*.{mp3,flac,ogg,m4a,wav,aif,aiff}",
+                )
+                .file_type(globwalk::FileType::FILE)
+                .build()
+                .expect("glob shouldn't fail");
+
+                walker.into_iter().map_ok(move |entry| (root_path, entry))
+            })
+            .partition_result();
+
+        // extend errors
+        errors.extend(
+            walk_errors
+                .into_iter()
+                .map(|e| anyhow::anyhow!("failed to scan file {:?}: {}", e.path(), e)),
+        );
+
+        struct ScanItem<'a> {
+            root: &'a Path,
+            path: String,
         }
 
-        // let library_strings = library.iter().map(|(name, _)| name.clone()).collect();
-        let library_strings = library
+        let (local_files, scan_errors): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .map(|(root_path, entry)| {
+                // get path without root
+                let path = entry
+                    .into_path()
+                    .strip_prefix(root_path)
+                    .context("failed to strip root path prefix")?
+                    .to_string_lossy()
+                    .to_string();
+
+                anyhow::Result::Ok(ScanItem {
+                    // hash_kind: "sha256".to_string(),
+                    // hash: "".to_string(),
+                    root: root_path,
+                    path,
+                })
+            })
+            .partition_result();
+
+        // extend errors
+        errors.extend(
+            scan_errors
+                .into_iter()
+                .map(|e: anyhow::Error| e.context("failed to scan file")),
+        );
+
+        let index = local_files
             .iter()
-            .map(|(_, path)| path.to_string_lossy().to_string())
-            .collect();
-        self.library.store(Arc::new(library_strings));
+            .map(|item| {
+                // TODO
+                let full_path = format!("{}/{}", item.root.to_string_lossy(), item.path);
+                full_path
+            })
+            .collect::<Vec<String>>();
+
+        self.library.store(Arc::new(index));
 
         self.notify_state();
 
@@ -258,10 +371,18 @@ impl ProtocolThread {
     }
 
     fn notify_state(self: &Arc<Self>) {
+        let local_roots = {
+            let db = self.db.lock().unwrap();
+            db.get_local_roots()
+                .context("failed to get local roots")
+                .unwrap_or_else(|_| Vec::new()) // TODO
+        };
+
         let mut signal = self.signal.lock().unwrap();
         signal.set(Some(ProtocolState {
             node_id: self.router.endpoint().node_id(),
             relay_url: format!("{:?}", self.router.endpoint().home_relay().get()),
+            local_roots,
             library: self.library.load_full(),
         }));
     }

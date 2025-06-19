@@ -1,6 +1,6 @@
 pub(crate) mod protocol;
 
-use crate::protocol::{start_node, ProtocolCommand, ProtocolHandle};
+use crate::protocol::{start_node, ProtocolCommand, ProtocolHandle, ProtocolState};
 use dioxus::prelude::*;
 use iroh::NodeAddr;
 
@@ -63,6 +63,7 @@ fn App() -> Element {
 #[component]
 fn Home() -> Element {
     let signal = use_signal_sync(|| None);
+    use_context_provider(|| signal);
 
     // start node and provide ProtocolHandle context
     let handle = use_hook(|| start_node(signal));
@@ -136,21 +137,25 @@ fn Connect() -> Element {
 
 #[component]
 fn Library() -> Element {
-    let mut paths = use_signal(Vec::<String>::new);
-
     let handle = use_context::<ReadOnlySignal<ProtocolHandle>>();
+
+    let state = use_context::<SyncSignal<Option<ProtocolState>>>();
+    let paths = state
+        .read()
+        .as_ref()
+        .map(|s| s.local_roots.clone())
+        .unwrap_or_default();
 
     rsx! {
         div {
             h2 { "Library Paths" }
             ul {
-                for (idx, path) in paths().iter().enumerate() {
+                for path in paths.into_iter() {
                     li {
                         "{path} "
                         button {
                             onclick: move |_| {
-                                paths.remove(idx);
-                                handle.read().send(ProtocolCommand::Scan(paths.read().clone()));
+                                handle.read().send(ProtocolCommand::RemoveRoot(path.clone()));
                             },
                             "Remove"
                         }
@@ -163,10 +168,7 @@ fn Library() -> Element {
                 onchange: move |evt| {
                     if let Some(file_engine) = evt.files() {
                         let files = file_engine.files();
-                        for file_name in files {
-                            paths.push(file_name);
-                        }
-                        handle.read().send(ProtocolCommand::Scan(paths.read().clone()));
+                        handle.read().send(ProtocolCommand::AddRoots(files));
                     }
                 }
             }
