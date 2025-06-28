@@ -9,40 +9,37 @@
       };
     };
   };
+
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem
       (system:
         let
           overlays = [ (import rust-overlay) ];
+
           pkgs = import nixpkgs {
             inherit system overlays;
           };
+
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [ "rust-src" ];
+            targets = [
+              "aarch64-linux-android"
+              "armv7-linux-androideabi"
+              "i686-linux-android"
+              "x86_64-linux-android"
+            ];
           };
+
           nativeBuildInputs = [
             rustToolchain
-            pkgs.pkg-config
+            pkgs.cargo-ndk
             pkgs.just
-            pkgs.nodejs_24
           ];
-          buildInputs = [
-            pkgs.dioxus-cli
-            pkgs.gtk3
-            pkgs.webkitgtk_4_1
-            pkgs.xdotool
-          ];
+          buildInputs = [];
         in
-        with pkgs;
         {
-          devShells.default = mkShell {
+          devShells.default = pkgs.mkShell rec {
             inherit nativeBuildInputs buildInputs;
-
-            # fix for font size
-            shellHook = ''
-              export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS;
-              export GIO_MODULE_DIR="${pkgs.glib-networking}/lib/gio/modules/";
-            '';
           };
         }
       );

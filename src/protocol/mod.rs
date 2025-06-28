@@ -3,7 +3,6 @@ pub(crate) mod database;
 use crate::protocol::database::Database;
 use anyhow::Context;
 use arc_swap::ArcSwap;
-use dioxus::signals::{SyncSignal, Writable};
 use iroh::{
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeAddr, PublicKey,
@@ -51,7 +50,7 @@ pub enum ProtocolCommand {
     Shutdown,
 }
 
-pub fn start_node(signal: SyncSignal<Option<ProtocolState>>) -> ProtocolHandle {
+pub fn start_node() -> ProtocolHandle {
     let (tx, rx) = mpsc::unbounded_channel();
 
     std::thread::spawn(move || {
@@ -61,7 +60,7 @@ pub fn start_node(signal: SyncSignal<Option<ProtocolState>>) -> ProtocolHandle {
             .expect("should build runtime");
 
         builder.block_on(async move {
-            let protocol_thread = match ProtocolThread::new(signal).await {
+            let protocol_thread = match ProtocolThread::new().await {
                 Ok(x) => x,
                 Err(e) => {
                     println!("error creating ProtocolThread: {e:#}");
@@ -80,8 +79,6 @@ pub fn start_node(signal: SyncSignal<Option<ProtocolState>>) -> ProtocolHandle {
 
 #[derive(Debug)]
 struct ProtocolThread {
-    signal: Mutex<SyncSignal<Option<ProtocolState>>>,
-
     router: Router,
     protocol: Protocol,
     library: Arc<ArcSwap<Vec<String>>>,
@@ -90,7 +87,7 @@ struct ProtocolThread {
 }
 
 impl ProtocolThread {
-    async fn new(signal: SyncSignal<Option<ProtocolState>>) -> anyhow::Result<Arc<Self>> {
+    async fn new() -> anyhow::Result<Arc<Self>> {
         let db = Mutex::new(Database::open("musicopy.db").context("failed to open database")?);
 
         let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -104,8 +101,6 @@ impl ProtocolThread {
             .spawn();
 
         let protocol = Arc::new(Self {
-            signal: Mutex::new(signal),
-
             router,
             protocol,
 
@@ -371,20 +366,22 @@ impl ProtocolThread {
     }
 
     fn notify_state(self: &Arc<Self>) {
-        let local_roots = {
-            let db = self.db.lock().unwrap();
-            db.get_local_roots()
-                .context("failed to get local roots")
-                .unwrap_or_else(|_| Vec::new()) // TODO
-        };
+        // TODO
 
-        let mut signal = self.signal.lock().unwrap();
-        signal.set(Some(ProtocolState {
-            node_id: self.router.endpoint().node_id(),
-            relay_url: format!("{:?}", self.router.endpoint().home_relay().get()),
-            local_roots,
-            library: self.library.load_full(),
-        }));
+        // let local_roots = {
+        //     let db = self.db.lock().unwrap();
+        //     db.get_local_roots()
+        //         .context("failed to get local roots")
+        //         .unwrap_or_else(|_| Vec::new()) // TODO
+        // };
+
+        // let mut signal = self.signal.lock().unwrap();
+        // signal.set(Some(ProtocolState {
+        //     node_id: self.router.endpoint().node_id(),
+        //     relay_url: format!("{:?}", self.router.endpoint().home_relay().get()),
+        //     local_roots,
+        //     library: self.library.load_full(),
+        // }));
     }
 }
 
