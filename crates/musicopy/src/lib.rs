@@ -32,7 +32,6 @@ impl From<anyhow::Error> for CoreError {
 /// State sent to Compose.
 #[derive(Debug, uniffi::Record)]
 pub struct Model {
-    update_count: u32,
     node: Option<NodeModel>,
 }
 
@@ -56,7 +55,7 @@ impl Core {
         android_logger::init_once(
             android_logger::Config::default()
                 .with_max_level(log::LevelFilter::Trace) // limit log level
-                .with_tag("irohcompose")
+                .with_tag("musicopy")
                 .with_filter(
                     android_logger::FilterBuilder::new()
                         .parse("debug,iroh=warn")
@@ -98,13 +97,8 @@ impl Core {
                         async move {
                             debug!("core: inside polling task");
 
-                            let mut update_count = 0;
-
                             loop {
-                                update_count += 1;
-
                                 event_handler.on_update(Model {
-                                    update_count,
                                     node: Some(node.model()),
                                 });
 
