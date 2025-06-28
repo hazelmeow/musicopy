@@ -63,6 +63,7 @@ impl Core {
                         .build(),
                 ),
         );
+        log_panics::init();
 
         debug!("core: starting core");
 
