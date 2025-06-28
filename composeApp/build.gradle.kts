@@ -24,7 +24,7 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
+
     listOf(
         iosX64(),
         iosArm64(),
@@ -35,15 +35,18 @@ kotlin {
             isStatic = true
         }
     }
-    
+
     jvm("desktop")
-    
+
     sourceSets {
         val desktopMain by getting
-        
+
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+
+            // QR scanner
+            implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
         }
         commonMain.dependencies {
             implementation(compose.runtime)
@@ -56,7 +59,11 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
 
+            // bottom sheet
             implementation("com.composables:core:1.36.1")
+
+            // QR generator
+            implementation("io.github.alexzhirkevich:qrose:1.0.1")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

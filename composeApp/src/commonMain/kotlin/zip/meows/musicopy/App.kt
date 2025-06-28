@@ -39,12 +39,16 @@ import com.composables.core.SheetDetent
 import com.composables.core.SheetDetent.Companion.FullyExpanded
 import com.composables.core.SheetDetent.Companion.Hidden
 import com.composables.core.rememberModalBottomSheetState
+import io.github.alexzhirkevich.qrose.QrData
+import io.github.alexzhirkevich.qrose.rememberQrCodePainter
+import io.github.alexzhirkevich.qrose.text
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.compose_multiplatform
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import uniffi.musicopy.Model
 import zip.meows.musicopy.ui.NodeStatusSheet
+import zip.meows.musicopy.ui.QRScanner
 import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 
 @Composable
@@ -78,8 +82,24 @@ fun App(
             Button(onClick = { sheetState.peek() }) {
                 Text("Show Node Info")
             }
-
+            
             val model by viewModel.state.collectAsState()
+
+            Text("state = ${model}")
+
+            model?.node?.let {
+                Image(
+                    painter = rememberQrCodePainter(
+                        QrData.text(it.nodeId)
+                    ),
+                    contentDescription = "QR code containing node ID",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            QRScanner(onResult = { nodeId ->
+                viewModel.instance.send(nodeId, "meow meow meow")
+            })
 
             NodeStatusSheet(sheetState, model)
         }

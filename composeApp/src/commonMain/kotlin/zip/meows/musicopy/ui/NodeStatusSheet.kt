@@ -83,7 +83,7 @@ class NodeStatusSheetState(
 @Composable
 fun rememberNodeStatusSheetState(): NodeStatusSheetState {
     val inner = rememberModalBottomSheetState(
-        initialDetent = Peek,
+        initialDetent = Hidden,
         detents = listOf(Hidden, Peek, FullyExpanded)
     )
     return NodeStatusSheetState(
