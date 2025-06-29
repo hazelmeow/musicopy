@@ -18,8 +18,10 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import zip.meows.musicopy.ui.ConnectQRScreen
-import zip.meows.musicopy.ui.HomeScreen
+import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
+import zip.meows.musicopy.ui.screens.ConnectQRScreen
+import zip.meows.musicopy.ui.screens.ConnectingScreen
+import zip.meows.musicopy.ui.screens.HomeScreen
 
 enum class AppScreen() {
     Home(),
@@ -82,19 +84,33 @@ fun App(
                 composable(route = AppScreen.ConnectQR.name) {
                     model?.let {
                         ConnectQRScreen(
-                            onScan = {}
+                            onSubmit = {
+                                navController.navigate(AppScreen.Connecting.name)
+                            },
+                            onCancel = {
+                                navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                            }
                         )
                     }
                 }
                 composable(route = AppScreen.ConnectManually.name) {
                     model?.let {
-                        ConnectQRScreen(
-                            onScan = {},
+                        ConnectManuallyScreen(
+                            onSubmit = {
+                                navController.navigate(AppScreen.Connecting.name)
+                            },
+                            onCancel = {
+                                navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                            }
                         )
                     }
                 }
                 composable(route = AppScreen.Connecting.name) {
-                    Text("connecting")
+                    ConnectingScreen(
+                        onCancel = {
+                            navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                        }
+                    )
                 }
                 composable(route = AppScreen.PreTransfer.name) {
                     Text("pretransfer")

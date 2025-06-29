@@ -1,14 +1,19 @@
-package zip.meows.musicopy.ui
+package zip.meows.musicopy.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,14 +22,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import io.github.alexzhirkevich.qrose.QrData
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import io.github.alexzhirkevich.qrose.text
 import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.compose_multiplatform
+import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
-import zip.meows.musicopy.Greeting
+import zip.meows.musicopy.ui.NodeStatusSheet
+import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 
 @Composable
 fun HomeScreen(
@@ -39,20 +46,6 @@ fun HomeScreen(
             .fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Button(onClick = { showContent = !showContent }) {
-            Text("Click me!")
-        }
-        AnimatedVisibility(showContent) {
-            val greeting = remember { Greeting().greet() }
-            Column(
-                Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Image(painterResource(Res.drawable.compose_multiplatform), null)
-                Text("Compose: $greeting")
-            }
-        }
-
         val sheetState = rememberNodeStatusSheetState()
         Button(onClick = { sheetState.peek() }) {
             Text("Show Node Info")
@@ -70,17 +63,37 @@ fun HomeScreen(
             )
         }
 
-        Card() {
-            Row() {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Card {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Connect", style = MaterialTheme.typography.titleLarge)
 
+                    Box(modifier = Modifier.weight(1f))
+
+                    Button(onClick = onConnectQRButtonClicked) {
+                        Icon(
+                            painter = painterResource(Res.drawable.content_copy_24px),
+                            contentDescription = "QR code icon"
+                        )
+                        Text("QR")
+                    }
+
+                    Button(onClick = onConnectManuallyButtonClicked) {
+                        Icon(
+                            painter = painterResource(Res.drawable.content_copy_24px),
+                            contentDescription = "QR code icon"
+                        )
+                        Text("Manual")
+                    }
+                }
             }
-        }
-
-        Button(onClick = onConnectQRButtonClicked) {
-            Text("connect qr")
-        }
-        Button(onClick = onConnectManuallyButtonClicked) {
-            Text("connect manually")
         }
 
         NodeStatusSheet(sheetState, model)
