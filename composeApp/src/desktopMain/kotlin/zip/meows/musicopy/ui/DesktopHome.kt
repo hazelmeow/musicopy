@@ -44,7 +44,6 @@ fun DesktopHome(
             }
 
             val left = @Composable {
-
                 ConnectWidget(
                     model = model,
                     onAcceptAndTrust = onAcceptAndTrust,
@@ -56,12 +55,9 @@ fun DesktopHome(
                 }
             }
             val right = @Composable {
-                Card(modifier = Modifier.height(100.dp).width(100.dp)) {
-                    Text("Connect")
-                }
-                Card(modifier = Modifier.height(100.dp).width(100.dp)) {
-                    Text("Connect")
-                }
+                JobsWidget(
+                    model = model,
+                )
             }
 
             if (oneCol) {

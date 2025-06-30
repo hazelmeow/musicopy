@@ -4,6 +4,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
+use itertools::Itertools;
 use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,10 +19,12 @@ use tokio_util::{
 };
 
 #[derive(Debug, uniffi::Record)]
-pub struct PendingConnection {
+pub struct ConnectionModel {
     pub name: String,
     pub node_id: String,
     pub connected_at: u64,
+    pub connection_type: String,
+    pub latency_ms: Option<u64>,
 }
 
 /// Node state sent to Compose.
@@ -39,7 +42,8 @@ pub struct NodeModel {
     conn_success: u64,
     conn_direct: u64,
 
-    pending_connections: Vec<PendingConnection>,
+    active_connections: Vec<ConnectionModel>,
+    pending_connections: Vec<ConnectionModel>,
 }
 
 #[derive(Debug)]
@@ -237,27 +241,38 @@ impl Node {
 
         let metrics = self.router.endpoint().metrics();
 
-        let pending_connections = {
+        let (active_connections, pending_connections) = {
             let peers = self.peers.lock().unwrap();
-            let mut pending_connections = peers
+            let (mut active_connections, mut pending_connections) = peers
                 .iter()
-                .filter_map(|(node_id, peer_handle)| {
-                    if !peer_handle
+                .map(|(node_id, peer_handle)| {
+                    let accepted = peer_handle
                         .accepted
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        Some(PendingConnection {
-                            name: "unknown".to_string(), // TODO: get real name
-                            node_id: node_id.to_string(),
-                            connected_at: peer_handle.connected_at,
-                        })
-                    } else {
-                        None
-                    }
+                        .load(std::sync::atomic::Ordering::Relaxed);
+
+                    let remote_info = self.router.endpoint().remote_info(*node_id);
+                    let connection_type = remote_info
+                        .as_ref()
+                        .map(|info| info.conn_type.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let latency_ms = remote_info
+                        .and_then(|info| info.latency)
+                        .map(|latency| latency.as_millis() as u64);
+
+                    let model = ConnectionModel {
+                        name: "unknown".to_string(), // TODO: get real name
+                        node_id: node_id.to_string(),
+                        connected_at: peer_handle.connected_at,
+                        connection_type,
+                        latency_ms,
+                    };
+
+                    if accepted { Ok(model) } else { Err(model) }
                 })
-                .collect::<Vec<_>>();
+                .partition_result::<Vec<_>, Vec<_>, _, _>();
+            active_connections.sort_by_key(|c| c.connected_at);
             pending_connections.sort_by_key(|c| c.connected_at);
-            pending_connections
+            (active_connections, pending_connections)
         };
 
         NodeModel {
@@ -273,6 +288,7 @@ impl Node {
             conn_success: metrics.magicsock.connection_handshake_success.get(),
             conn_direct: metrics.magicsock.connection_became_direct.get(),
 
+            active_connections,
             pending_connections,
         }
     }

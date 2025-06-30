@@ -1,6 +1,9 @@
 package zip.meows.musicopy.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -51,6 +54,7 @@ fun ConnectWidget(
     ) {
         AnimatedContent(
             targetState = nextPending,
+            contentKey = { it -> it?.nodeId },
             transitionSpec = {
                 // Compare the incoming number with the previous number.
                 val targetConnectedAt = targetState?.connectedAt ?: 0u
