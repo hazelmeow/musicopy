@@ -84,7 +84,8 @@ fun App(
                 composable(route = AppScreen.ConnectQR.name) {
                     model?.let {
                         ConnectQRScreen(
-                            onSubmit = {
+                            onSubmit = { nodeId ->
+                                viewModel.instance.connect(nodeId = nodeId)
                                 navController.navigate(AppScreen.Connecting.name)
                             },
                             onCancel = {
@@ -96,7 +97,8 @@ fun App(
                 composable(route = AppScreen.ConnectManually.name) {
                     model?.let {
                         ConnectManuallyScreen(
-                            onSubmit = {
+                            onSubmit = { nodeId ->
+                                viewModel.instance.connect(nodeId = nodeId)
                                 navController.navigate(AppScreen.Connecting.name)
                             },
                             onCancel = {

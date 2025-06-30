@@ -1,6 +1,10 @@
+pub mod error;
 pub mod node;
 
-use crate::node::{Node, NodeCommand, NodeModel};
+use crate::{
+    error::CoreError,
+    node::{Node, NodeCommand, NodeModel},
+};
 use anyhow::Context;
 use iroh::{NodeAddr, NodeId};
 use log::{debug, error};
@@ -9,30 +13,10 @@ use tokio::sync::mpsc;
 
 uniffi::setup_scaffolding!();
 
-/// Error type for FFI.
-#[derive(Debug, thiserror::Error, uniffi::Object)]
-#[error("{e:?}")]
-pub struct CoreError {
-    e: anyhow::Error,
-}
-
-#[uniffi::export]
-impl CoreError {
-    fn message(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl From<anyhow::Error> for CoreError {
-    fn from(e: anyhow::Error) -> Self {
-        Self { e }
-    }
-}
-
 /// State sent to Compose.
 #[derive(Debug, uniffi::Record)]
 pub struct Model {
-    node: Option<NodeModel>,
+    node: NodeModel,
 }
 
 /// Foreign trait implemented in Compose for receiving events from the Rust core.
@@ -80,7 +64,7 @@ impl Core {
                 builder.block_on(async move {
                     debug!("core: inside async runtime");
 
-                    let node = match Node::new().await {
+                    let (node, run_token) = match Node::new().await {
                         Ok(x) => x,
                         Err(e) => {
                             error!("core: error creating node: {e:#}");
@@ -98,9 +82,7 @@ impl Core {
                             debug!("core: inside polling task");
 
                             loop {
-                                event_handler.on_update(Model {
-                                    node: Some(node.model()),
-                                });
+                                event_handler.on_update(Model { node: node.model() });
 
                                 tokio::time::sleep(std::time::Duration::from_secs_f64(1.0)).await;
                             }
@@ -109,7 +91,7 @@ impl Core {
 
                     debug!("core: inside async runtime - about to run node");
 
-                    if let Err(e) = node.run(rx).await {
+                    if let Err(e) = node.run(rx, run_token).await {
                         error!("core: error running node: {e:#}");
                     }
 
@@ -121,12 +103,12 @@ impl Core {
         Ok(Arc::new(Self { event_handler, tx }))
     }
 
-    pub fn send(&self, node_id: &str, text: String) -> Result<(), CoreError> {
+    pub fn connect(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
         let node_addr = NodeAddr::from(node_id);
 
         self.tx
-            .send(NodeCommand::Send(node_addr, text))
+            .send(NodeCommand::Connect(node_addr))
             .context("failed to send to node thread")?;
 
         Ok(())

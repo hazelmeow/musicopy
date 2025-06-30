@@ -23,4 +23,5 @@ rusqlite = { version = "0.36.0", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
 thiserror = "2.0.12"
 tokio = "1.45.1"
+tokio-util = { version = "0.7.15", features = ["io"] }
 uniffi = { version = "=0.28.3", features = [] }

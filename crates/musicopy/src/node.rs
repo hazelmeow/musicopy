@@ -1,13 +1,27 @@
+use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, NodeAddr,
+    Endpoint, NodeAddr, NodeId,
+    endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
 use n0_future::future::Boxed;
+use serde::{Deserialize, Serialize};
 use std::{
-    sync::{Arc, Mutex},
+    collections::HashMap,
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::mpsc;
+use tokio_util::{
+    bytes::Bytes,
+    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
+};
+
+#[derive(Debug, uniffi::Record)]
+pub struct PendingConnection {
+    pub name: String,
+    pub node_id: String,
+}
 
 /// Node state sent to Compose.
 #[derive(Debug, uniffi::Record)]
@@ -23,11 +37,23 @@ pub struct NodeModel {
     recv_relay: u64,
     conn_success: u64,
     conn_direct: u64,
+
+    pending_connections: Vec<PendingConnection>,
+}
+
+#[derive(Debug)]
+pub enum PeerState {
+    Waiting,
+    Accepted,
 }
 
 #[derive(Debug)]
 pub enum NodeCommand {
-    Send(NodeAddr, String),
+    Connect(NodeAddr),
+
+    AcceptConnection(NodeId),
+    DenyConnection(NodeId),
+
     Stop,
 }
 
@@ -35,37 +61,79 @@ pub enum NodeCommand {
 pub struct Node {
     router: Router,
     protocol: Protocol,
+    peers: Mutex<HashMap<NodeId, PeerHandle>>,
+}
+
+#[derive(Debug)]
+pub struct NodeRunToken {
+    peer_rx: mpsc::UnboundedReceiver<(NodeId, PeerHandle)>,
 }
 
 impl Node {
-    pub async fn new() -> anyhow::Result<Arc<Self>> {
+    pub async fn new() -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
+        let (peer_tx, peer_rx) = mpsc::unbounded_channel();
+
         let endpoint = Endpoint::builder().discovery_n0().bind().await?;
-        let protocol = Protocol::new();
+        let protocol = Protocol::new(peer_tx);
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
             .spawn();
 
-        Ok(Arc::new(Self { router, protocol }))
+        let node = Arc::new(Self {
+            router,
+            protocol,
+            peers: Mutex::new(HashMap::new()),
+        });
+
+        let node_run = NodeRunToken { peer_rx };
+
+        Ok((node, node_run))
     }
 
     pub async fn run(
         self: &Arc<Self>,
         mut rx: mpsc::UnboundedReceiver<NodeCommand>,
+        run_token: NodeRunToken,
     ) -> anyhow::Result<()> {
+        let NodeRunToken { mut peer_rx } = run_token;
+
         loop {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        NodeCommand::Send(addr, text) => {
+                        NodeCommand::Connect(addr) => {
                             let this = self.clone();
                             tokio::task::spawn(async move {
                                 // TODO: return error
-                                let _ = this.send(addr, text).await;
+                                let _ = this.connect(addr).await;
                             });
                         },
+
+                        NodeCommand::AcceptConnection(node_id) => {
+                            let peers = self.peers.lock().unwrap();
+                            if let Some(peer_handle) = peers.get(&node_id) {
+                                peer_handle.tx.send(PeerCommand::Accept).expect("failed to send accept command");
+                            } else {
+                                log::error!("AcceptConnection: no peer found with node_id: {node_id}");
+                            }
+                        },
+                        NodeCommand::DenyConnection(node_id) => {
+                            let peers = self.peers.lock().unwrap();
+                            if let Some(peer_handle) = peers.get(&node_id) {
+                                peer_handle.tx.send(PeerCommand::Close).expect("failed to send close command");
+                            } else {
+                                log::error!("DenyConnection: no peer found with node_id: {node_id}");
+                            }
+                        },
+
                         NodeCommand::Stop => break,
                     }
+                }
+
+                Some((peer_id, peer_handle)) = peer_rx.recv() => {
+                    let mut peers = self.peers.lock().unwrap();
+                    peers.insert(peer_id, peer_handle);
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -76,25 +144,81 @@ impl Node {
         Ok(())
     }
 
-    pub async fn send(self: &Arc<Self>, addr: NodeAddr, text: String) -> anyhow::Result<()> {
-        // Open a connection to the accepting node
+    async fn connect(self: &Arc<Self>, addr: NodeAddr) -> anyhow::Result<()> {
+        // connect
         let conn = self.router.endpoint().connect(addr, Protocol::ALPN).await?;
 
-        // Open a bidirectional QUIC stream
-        let (mut send, mut recv) = conn.open_bi().await?;
+        // open a bidirectional QUIC stream
+        let (send, recv) = conn.open_bi().await?;
 
-        // Send some data to be echoed
-        send.write_all(b"Hello, world!").await?;
+        // wrap in framed codecs
+        let mut send = FramedWrite::new(send, LengthDelimitedCodec::new()).with_flat_map(
+            |message: ClientMessage| {
+                let buf: Vec<u8> =
+                    postcard::to_stdvec(&message).expect("failed to serialize message");
+                futures::stream::once(futures::future::ready(Ok(Bytes::from(buf))))
+            },
+        );
+        let mut recv = FramedRead::new(recv, LengthDelimitedCodec::new())
+            .map_err(|e| anyhow::anyhow!("failed to read from connection: {e:?}"))
+            .map(|res| {
+                res.and_then(|bytes| {
+                    postcard::from_bytes::<ServerMessage>(&bytes)
+                        .map_err(|e| anyhow::anyhow!("failed to deserialize message: {e:?}"))
+                })
+            });
 
-        // Signal the end of data for this particular stream
-        send.finish()?;
+        // send client Identify
+        // TODO: real name
+        send.send(ClientMessage::Identify("client".to_string()))
+            .await
+            .expect("failed to send Identify message");
 
-        // Receive the echo, but limit reading up to maximum 1000 bytes
-        let response = recv.read_to_end(1000).await?;
-        assert_eq!(&response, b"Hello, world!");
+        // wait for server Identify
+        let Some(Ok(message)) = recv.next().await else {
+            log::error!("failed to receive Identify message");
+            return Ok(());
+        };
+        match message {
+            ServerMessage::Identify(name) => {
+                // TODO: store
+                log::info!("server identified as {name}");
+            }
+            _ => {
+                log::error!("unexpected message, expected Identify: {message:?}");
+                return Ok(());
+            }
+        }
 
-        // Explicitly close the whole connection.
-        conn.close(0u32.into(), b"bye!");
+        // wait for server Accepted
+        let Some(Ok(message)) = recv.next().await else {
+            log::error!("failed to receive Accepted message");
+            return Ok(());
+        };
+        match message {
+            ServerMessage::Accepted => {
+                log::info!("server accepted the connection");
+            }
+            _ => {
+                log::error!("unexpected message, expected Accepted: {message:?}");
+                return Ok(());
+            }
+        }
+
+        // TODO: open streams and such
+
+        loop {
+            tokio::select! {
+                Some(Ok(message)) = recv.next() => {
+                    log::debug!("received message: {message:?}");
+                }
+
+                _ = conn.closed() => {
+                    log::info!("connection closed");
+                    break;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -112,6 +236,26 @@ impl Node {
 
         let metrics = self.router.endpoint().metrics();
 
+        let pending_connections = {
+            let peers = self.peers.lock().unwrap();
+            peers
+                .iter()
+                .filter_map(|(node_id, peer_handle)| {
+                    if !peer_handle
+                        .accepted
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        Some(PendingConnection {
+                            name: "unknown".to_string(), // TODO: get real name
+                            node_id: node_id.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
         NodeModel {
             node_id: self.router.endpoint().node_id().to_string(),
             home_relay,
@@ -124,52 +268,211 @@ impl Node {
             recv_relay: metrics.magicsock.recv_data_relay.get(),
             conn_success: metrics.magicsock.connection_handshake_success.get(),
             conn_direct: metrics.magicsock.connection_became_direct.get(),
+
+            pending_connections,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Protocol {}
-
-impl Protocol {
-    pub const ALPN: &[u8] = b"iroh-compose-demo/0";
-
-    pub fn new() -> Self {
-        Self {}
-    }
+struct Protocol {
+    peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
 }
 
-impl Default for Protocol {
-    fn default() -> Self {
-        Self::new()
+impl Protocol {
+    const ALPN: &'static [u8] = b"musicopy/0";
+
+    fn new(peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
+        Self { peer_tx }
     }
 }
 
 impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
+        let handle_tx = self.peer_tx.clone();
         Box::pin(async move {
             // We can get the remote's node id from the connection.
             let node_id = connection.remote_node_id()?;
             println!("accepted connection from {node_id}");
 
-            // Our protocol is a simple request-response protocol, so we expect the
-            // connecting peer to open a single bi-directional stream.
-            let (mut send, mut recv) = connection.accept_bi().await?;
+            let mut peer = Peer::new(connection, handle_tx);
+            peer.run().await?;
 
-            // Echo any bytes received back directly.
-            // This will keep copying until the sender signals the end of data on the stream.
-            let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
-            println!("Copied over {bytes_sent} byte(s)");
-
-            // By calling `finish` on the send stream we signal that we will not send anything
-            // further, which makes the receive stream on the other end terminate.
-            send.finish()?;
-
-            // Wait until the remote closes the connection, which it does once it
-            // received the response.
-            connection.closed().await;
+            peer.connection.closed().await;
 
             Ok(())
         })
+    }
+}
+
+#[derive(Debug)]
+enum PeerCommand {
+    Accept,
+
+    Close,
+}
+
+#[derive(Debug, Clone)]
+struct PeerHandle {
+    accepted: Arc<AtomicBool>,
+    tx: mpsc::UnboundedSender<PeerCommand>,
+}
+
+/// A message sent by the client end of a connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ClientMessage {
+    Identify(String),
+}
+
+/// A message sent by the server end of a connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ServerMessage {
+    Identify(String),
+    Accepted,
+    Index,
+}
+
+struct Peer {
+    connection: Connection,
+    handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+    accepted: Arc<AtomicBool>,
+    tx: mpsc::UnboundedSender<PeerCommand>,
+    rx: mpsc::UnboundedReceiver<PeerCommand>,
+}
+
+impl Peer {
+    fn new(connection: Connection, handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        Self {
+            connection,
+            handle_tx,
+            accepted: Arc::new(AtomicBool::new(false)),
+            tx,
+            rx,
+        }
+    }
+
+    async fn run(&mut self) -> anyhow::Result<()> {
+        let remote_node_id = self.connection.remote_node_id()?;
+
+        // accept bidirectional control stream
+        let (send, recv) = self.connection.accept_bi().await?;
+
+        // wrap in framed codecs
+        let mut send = FramedWrite::new(send, LengthDelimitedCodec::new()).with_flat_map(
+            |message: ServerMessage| {
+                let buf: Vec<u8> =
+                    postcard::to_stdvec(&message).expect("failed to serialize message");
+                futures::stream::once(futures::future::ready(Ok(Bytes::from(buf))))
+            },
+        );
+        let mut recv = FramedRead::new(recv, LengthDelimitedCodec::new())
+            .map_err(|e| anyhow::anyhow!("failed to read from connection: {e:?}"))
+            .map(|res| {
+                res.and_then(|bytes| {
+                    postcard::from_bytes::<ClientMessage>(&bytes)
+                        .map_err(|e| anyhow::anyhow!("failed to deserialize message: {e:?}"))
+                })
+            });
+
+        // wait for client Identify
+        let Some(Ok(message)) = recv.next().await else {
+            log::error!("failed to receive Identify message");
+            return Ok(());
+        };
+        match message {
+            ClientMessage::Identify(name) => {
+                // TODO: store
+                log::debug!("peer identified as {name}");
+            }
+            _ => {
+                log::error!("unexpected message, expected Identify: {message:?}");
+                return Ok(());
+            }
+        }
+
+        // send server Identify
+        // TODO: real name
+        send.send(ServerMessage::Identify("server".to_string()))
+            .await
+            .expect("failed to send Identify message");
+
+        // send handle to Node
+        self.handle_tx
+            .send((
+                remote_node_id,
+                PeerHandle {
+                    accepted: self.accepted.clone(),
+                    tx: self.tx.clone(),
+                },
+            ))
+            .expect("failed to send peer handle");
+
+        // waiting loop
+        loop {
+            tokio::select! {
+                Some(command) = self.rx.recv() => {
+                    match command {
+                        PeerCommand::Accept => {
+                            // continue to next state
+                            break;
+                        },
+                        PeerCommand::Close => {
+                            self.connection.close(0u32.into(), b"close");
+                            return Ok(());
+                        },
+                    }
+                }
+
+                Some(Ok(message)) = recv.next() => {
+                    log::debug!("unexpected message (waiting): {message:?}");
+                }
+
+                else => break,
+            }
+        }
+
+        // mark as accepted
+        self.accepted
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        // send Accepted message
+        send.send(ServerMessage::Accepted)
+            .await
+            .expect("failed to send Accepted message");
+
+        // send Index message
+        // TODO: real index
+        send.send(ServerMessage::Index)
+            .await
+            .expect("failed to send Index message");
+
+        // main loop
+        loop {
+            tokio::select! {
+                Some(command) = self.rx.recv() => {
+                    match command {
+                        PeerCommand::Accept => {
+                            log::warn!("unexpected Accept command in main loop");
+                        },
+                        PeerCommand::Close => {
+                            self.connection.close(0u32.into(), b"close");
+                            break;
+                        },
+                    }
+                }
+
+                Some(Ok(message)) = recv.next() => {
+                    log::debug!("accepted message: {message:?}");
+                }
+
+                // TODO: accept new bidi streams for file transfers
+            }
+        }
+
+        self.connection.closed().await;
+
+        Ok(())
     }
 }

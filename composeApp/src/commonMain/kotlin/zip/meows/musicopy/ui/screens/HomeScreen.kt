@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -39,11 +42,8 @@ fun HomeScreen(
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
 ) {
-    var showContent by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier
-            .safeContentPadding()
-            .fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val sheetState = rememberNodeStatusSheetState()
@@ -53,27 +53,29 @@ fun HomeScreen(
 
         Text("state = ${model}")
 
-        model.node?.let {
-            Image(
-                painter = rememberQrCodePainter(
-                    QrData.text(it.nodeId)
-                ),
-                contentDescription = "QR code containing node ID",
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        Image(
+            painter = rememberQrCodePainter(
+                QrData.text(model.node.nodeId)
+            ),
+            contentDescription = "QR code containing node ID",
+            modifier = Modifier.fillMaxWidth()
+        )
 
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Card {
+            Card(modifier = Modifier.height(50.dp), shape = CircleShape) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("Connect", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Connect",
+                        modifier = Modifier.padding(start = 12.dp),
+                        style = MaterialTheme.typography.titleLarge
+                    )
 
                     Box(modifier = Modifier.weight(1f))
 
@@ -85,7 +87,10 @@ fun HomeScreen(
                         Text("QR")
                     }
 
-                    Button(onClick = onConnectManuallyButtonClicked) {
+                    Button(
+                        onClick = onConnectManuallyButtonClicked,
+                        shape = RoundedCornerShape(46.dp)
+                    ) {
                         Icon(
                             painter = painterResource(Res.drawable.content_copy_24px),
                             contentDescription = "QR code icon"

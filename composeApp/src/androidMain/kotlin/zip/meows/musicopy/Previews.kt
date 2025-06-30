@@ -27,7 +27,8 @@ fun ScreenPreview(
 fun ConnectQRScreenPreview() {
     ScreenPreview {
         ConnectQRScreen(
-            onSubmit = {}
+            onSubmit = {},
+            onCancel = {}
         )
     }
 }
