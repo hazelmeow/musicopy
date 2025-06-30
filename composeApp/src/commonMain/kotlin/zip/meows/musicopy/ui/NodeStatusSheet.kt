@@ -57,6 +57,7 @@ import musicopy.composeapp.generated.resources.sent_label
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import uniffi.musicopy.Model
+import zip.meows.musicopy.shortenNodeId
 import zip.meows.musicopy.toClipEntry
 
 
@@ -127,39 +128,37 @@ fun NodeStatusSheet(state: NodeStatusSheetState, model: Model? = null) {
                         modifier = Modifier.padding(8.dp).padding(bottom = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        model.node?.let { node ->
-                            StatusDetail(
-                                label = stringResource(resource = Res.string.node_id_label),
-                                value = "${node.nodeId.slice(0..<6)}...${node.nodeId.slice((node.nodeId.length - 6)..<(node.nodeId.length))}",
-                                iconPainter = painterResource(Res.drawable.network_node_24px),
-                                textToCopy = node.nodeId
-                            )
+                        StatusDetail(
+                            label = stringResource(resource = Res.string.node_id_label),
+                            value = shortenNodeId(model.node.nodeId),
+                            iconPainter = painterResource(Res.drawable.network_node_24px),
+                            textToCopy = model.node.nodeId
+                        )
 
-                            StatusDetail(
-                                label = stringResource(resource = Res.string.home_relay_label),
-                                value = node.homeRelay,
-                                iconPainter = painterResource(Res.drawable.cell_tower_24px),
-                                textToCopy = node.homeRelay
-                            )
+                        StatusDetail(
+                            label = stringResource(resource = Res.string.home_relay_label),
+                            value = model.node.homeRelay,
+                            iconPainter = painterResource(Res.drawable.cell_tower_24px),
+                            textToCopy = model.node.homeRelay
+                        )
 
-                            StatusDetail(
-                                label = stringResource(resource = Res.string.connections_label),
-                                value = "${node.connSuccess} success, ${node.connDirect} direct",
-                                iconPainter = painterResource(Res.drawable.p2p_24px),
-                            )
+                        StatusDetail(
+                            label = stringResource(resource = Res.string.connections_label),
+                            value = "${model.node.connSuccess} success, ${model.node.connDirect} direct",
+                            iconPainter = painterResource(Res.drawable.p2p_24px),
+                        )
 
-                            StatusDetail(
-                                label = stringResource(resource = Res.string.sent_label),
-                                value = "${node.sendIpv4} v4, ${node.sendIpv6} v6, ${node.sendRelay} relay",
-                                iconPainter = painterResource(Res.drawable.arrow_upward_24px),
-                            )
+                        StatusDetail(
+                            label = stringResource(resource = Res.string.sent_label),
+                            value = "${model.node.sendIpv4} v4, ${model.node.sendIpv6} v6, ${model.node.sendRelay} relay",
+                            iconPainter = painterResource(Res.drawable.arrow_upward_24px),
+                        )
 
-                            StatusDetail(
-                                label = stringResource(resource = Res.string.received_label),
-                                value = "${node.recvIpv4} v4, ${node.recvIpv6} v6, ${node.recvRelay} relay",
-                                iconPainter = painterResource(Res.drawable.arrow_downward_24px),
-                            )
-                        }
+                        StatusDetail(
+                            label = stringResource(resource = Res.string.received_label),
+                            value = "${model.node.recvIpv4} v4, ${model.node.recvIpv6} v6, ${model.node.recvRelay} relay",
+                            iconPainter = painterResource(Res.drawable.arrow_downward_24px),
+                        )
                     }
                 } ?: run {
                     CircularProgressIndicator()

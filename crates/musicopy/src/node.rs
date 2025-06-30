@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::sync::mpsc;
 use tokio_util::{
@@ -21,6 +21,7 @@ use tokio_util::{
 pub struct PendingConnection {
     pub name: String,
     pub node_id: String,
+    pub connected_at: u64,
 }
 
 /// Node state sent to Compose.
@@ -238,7 +239,7 @@ impl Node {
 
         let pending_connections = {
             let peers = self.peers.lock().unwrap();
-            peers
+            let mut pending_connections = peers
                 .iter()
                 .filter_map(|(node_id, peer_handle)| {
                     if !peer_handle
@@ -248,12 +249,15 @@ impl Node {
                         Some(PendingConnection {
                             name: "unknown".to_string(), // TODO: get real name
                             node_id: node_id.to_string(),
+                            connected_at: peer_handle.connected_at,
                         })
                     } else {
                         None
                     }
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            pending_connections.sort_by_key(|c| c.connected_at);
+            pending_connections
         };
 
         NodeModel {
@@ -314,6 +318,7 @@ enum PeerCommand {
 
 #[derive(Debug, Clone)]
 struct PeerHandle {
+    connected_at: u64,
     accepted: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<PeerCommand>,
 }
@@ -335,6 +340,7 @@ enum ServerMessage {
 struct Peer {
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+    connected_at: u64,
     accepted: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<PeerCommand>,
     rx: mpsc::UnboundedReceiver<PeerCommand>,
@@ -347,6 +353,10 @@ impl Peer {
         Self {
             connection,
             handle_tx,
+            connected_at: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             accepted: Arc::new(AtomicBool::new(false)),
             tx,
             rx,
@@ -403,6 +413,7 @@ impl Peer {
             .send((
                 remote_node_id,
                 PeerHandle {
+                    connected_at: self.connected_at,
                     accepted: self.accepted.clone(),
                     tx: self.tx.clone(),
                 },

@@ -50,17 +50,7 @@ fun HomeScreen(
         Button(onClick = { sheetState.peek() }) {
             Text("Show Node Info")
         }
-
-        Text("state = ${model}")
-
-        Image(
-            painter = rememberQrCodePainter(
-                QrData.text(model.node.nodeId)
-            ),
-            contentDescription = "QR code containing node ID",
-            modifier = Modifier.fillMaxWidth()
-        )
-
+        
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
