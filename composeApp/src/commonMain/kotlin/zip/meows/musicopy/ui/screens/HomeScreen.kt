@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +34,8 @@ import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
+import zip.meows.musicopy.AppSettings
+import zip.meows.musicopy.DirectoryPicker
 import zip.meows.musicopy.ui.NodeStatusSheet
 import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 
@@ -42,15 +45,25 @@ fun HomeScreen(
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
 ) {
+    val directoryPicker = DirectoryPicker.get()
+
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(null)
+        Button(onClick = {
+            directoryPicker.start()
+        }) {
+            Text("choose directory")
+        }
+        Text("download directory = ${downloadDirectory}")
+
         val sheetState = rememberNodeStatusSheetState()
         Button(onClick = { sheetState.peek() }) {
             Text("Show Node Info")
         }
-        
+
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),

@@ -67,6 +67,11 @@ kotlin {
 
             // navigation
             implementation("org.jetbrains.androidx.navigation:navigation-compose:2.9.0-beta03")
+
+            // multiplatform settings
+            implementation("com.russhwolf:multiplatform-settings-no-arg:1.3.0")
+            implementation("com.russhwolf:multiplatform-settings-make-observable:1.3.0")
+            implementation("com.russhwolf:multiplatform-settings-coroutines:1.3.0")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
