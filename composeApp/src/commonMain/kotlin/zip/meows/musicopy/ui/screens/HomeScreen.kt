@@ -1,7 +1,5 @@
 package zip.meows.musicopy.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -21,40 +18,32 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import io.github.alexzhirkevich.qrose.QrData
-import io.github.alexzhirkevich.qrose.rememberQrCodePainter
-import io.github.alexzhirkevich.qrose.text
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 import zip.meows.musicopy.AppSettings
-import zip.meows.musicopy.DirectoryPicker
 import zip.meows.musicopy.ui.NodeStatusSheet
 import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 
 @Composable
 fun HomeScreen(
     model: Model,
+    onPickDownloadDirectory: () -> Unit,
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
 ) {
-    val directoryPicker = DirectoryPicker.get()
-
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(null)
-        Button(onClick = {
-            directoryPicker.start()
-        }) {
+        Button(
+            onClick = onPickDownloadDirectory
+        ) {
             Text("choose directory")
         }
         Text("download directory = ${downloadDirectory}")

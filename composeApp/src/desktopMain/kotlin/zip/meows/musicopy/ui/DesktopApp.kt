@@ -19,9 +19,11 @@ fun DesktopApp(
         model?.let {
             DesktopHome(
                 model = it,
-                onAcceptAndTrust = { viewModel.instance.acceptConnection(it) },
-                onAcceptOnce = { viewModel.instance.acceptConnection(it) },
-                onDeny = { viewModel.instance.denyConnection(it) },
+                onAcceptAndTrust = { nodeId -> viewModel.instance.acceptConnection(nodeId) }, // TODO
+                onAcceptOnce = { nodeId -> viewModel.instance.acceptConnection(nodeId) },
+                onDeny = { nodeId -> viewModel.instance.denyConnection(nodeId) },
+                onAddLibraryRoot = { name, path -> viewModel.instance.addLibraryRoot(name, path) },
+                onRemoveLibraryRoot = { name -> viewModel.instance.removeLibraryRoot(name) }
             )
         }
     }

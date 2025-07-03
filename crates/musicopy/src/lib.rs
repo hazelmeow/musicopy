@@ -1,12 +1,15 @@
 pub mod error;
+pub mod file_dialog;
+pub mod library;
 pub mod node;
 
 use crate::{
     error::CoreError,
+    library::{Library, LibraryCommand, LibraryModel},
     node::{Node, NodeCommand, NodeModel},
 };
 use anyhow::Context;
-use iroh::{NodeAddr, NodeId};
+use iroh::{NodeAddr, NodeId, SecretKey};
 use log::{debug, error};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -17,6 +20,7 @@ uniffi::setup_scaffolding!();
 #[derive(Debug, uniffi::Record)]
 pub struct Model {
     node: NodeModel,
+    library: LibraryModel,
 }
 
 /// Foreign trait implemented in Compose for receiving events from the Rust core.
@@ -29,7 +33,8 @@ pub trait EventHandler: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct Core {
     event_handler: Arc<dyn EventHandler>,
-    tx: mpsc::UnboundedSender<NodeCommand>,
+    node_tx: mpsc::UnboundedSender<NodeCommand>,
+    library_tx: mpsc::UnboundedSender<LibraryCommand>,
 }
 
 #[uniffi::export]
@@ -50,7 +55,12 @@ impl Core {
 
         debug!("core: starting core");
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        // TODO: persist
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let node_id = NodeId::from(secret_key.public());
+
+        let (node_tx, node_rx) = mpsc::unbounded_channel();
+        let (library_tx, library_rx) = mpsc::unbounded_channel();
 
         // spawn node thread
         std::thread::spawn({
@@ -64,7 +74,7 @@ impl Core {
                 builder.block_on(async move {
                     debug!("core: inside async runtime");
 
-                    let (node, run_token) = match Node::new().await {
+                    let (node, run_token) = match Node::new(secret_key).await {
                         Ok(x) => x,
                         Err(e) => {
                             error!("core: error creating node: {e:#}");
@@ -74,6 +84,18 @@ impl Core {
 
                     debug!("core: inside async runtime - created node");
 
+                    // TODO clean this up
+                    // TODO pass path to files from app
+                    let library = Library::new(node_id, "TODO").await.unwrap();
+                    tokio::spawn({
+                        let library = library.clone();
+                        async move {
+                            if let Err(e) = library.run(library_rx).await {
+                                error!("core: error running library: {e:#}");
+                            }
+                        }
+                    });
+
                     // spawn state polling task
                     // TODO: reactive instead of polling?
                     tokio::spawn({
@@ -82,7 +104,10 @@ impl Core {
                             debug!("core: inside polling task");
 
                             loop {
-                                event_handler.on_update(Model { node: node.model() });
+                                event_handler.on_update(Model {
+                                    node: node.model(),
+                                    library: library.model(),
+                                });
 
                                 tokio::time::sleep(std::time::Duration::from_secs_f64(1.0)).await;
                             }
@@ -91,7 +116,7 @@ impl Core {
 
                     debug!("core: inside async runtime - about to run node");
 
-                    if let Err(e) = node.run(rx, run_token).await {
+                    if let Err(e) = node.run(node_rx, run_token).await {
                         error!("core: error running node: {e:#}");
                     }
 
@@ -100,14 +125,18 @@ impl Core {
             }
         });
 
-        Ok(Arc::new(Self { event_handler, tx }))
+        Ok(Arc::new(Self {
+            event_handler,
+            node_tx,
+            library_tx,
+        }))
     }
 
     pub fn connect(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
         let node_addr = NodeAddr::from(node_id);
 
-        self.tx
+        self.node_tx
             .send(NodeCommand::Connect(node_addr))
             .context("failed to send to node thread")?;
 
@@ -117,19 +146,43 @@ impl Core {
     pub fn accept_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.tx
+        self.node_tx
             .send(NodeCommand::AcceptConnection(node_id))
             .context("failed to send to node thread")?;
 
         Ok(())
     }
+
     pub fn deny_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.tx
+        self.node_tx
             .send(NodeCommand::DenyConnection(node_id))
             .context("failed to send to node thread")?;
 
+        Ok(())
+    }
+
+    pub fn add_library_root(&self, name: String, path: String) -> Result<(), CoreError> {
+        self.library_tx
+            .send(LibraryCommand::AddRoot { name, path })
+            .context("failed to send to library thread")?;
+
+        Ok(())
+    }
+
+    pub fn remove_library_root(&self, name: String) -> Result<(), CoreError> {
+        self.library_tx
+            .send(LibraryCommand::RemoveRoot { name })
+            .context("failed to send to library thread")?;
+
+        Ok(())
+    }
+
+    pub fn rescan_library(&self) -> Result<(), CoreError> {
+        self.library_tx
+            .send(LibraryCommand::Rescan)
+            .context("failed to send to library thread")?;
         Ok(())
     }
 }

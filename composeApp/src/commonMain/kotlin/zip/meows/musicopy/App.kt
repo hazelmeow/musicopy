@@ -80,6 +80,9 @@ fun App(
                     model?.let {
                         HomeScreen(
                             model = it,
+                            onPickDownloadDirectory = {
+                                directoryPicker.pickDownloadDirectory()
+                            },
                             onConnectQRButtonClicked = { navController.navigate(AppScreen.ConnectQR.name) },
                             onConnectManuallyButtonClicked = { navController.navigate(AppScreen.ConnectManually.name) }
                         )

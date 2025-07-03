@@ -1,6 +1,6 @@
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, NodeAddr, NodeId,
+    Endpoint, NodeAddr, NodeId, SecretKey,
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
@@ -75,10 +75,14 @@ pub struct NodeRunToken {
 }
 
 impl Node {
-    pub async fn new() -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
+    pub async fn new(secret_key: SecretKey) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
         let (peer_tx, peer_rx) = mpsc::unbounded_channel();
 
-        let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+        let endpoint = Endpoint::builder()
+            .secret_key(secret_key)
+            .discovery_n0()
+            .bind()
+            .await?;
         let protocol = Protocol::new(peer_tx);
 
         let router = Router::builder(endpoint)

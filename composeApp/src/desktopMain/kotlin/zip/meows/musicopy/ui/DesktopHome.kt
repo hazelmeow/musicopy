@@ -5,13 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +23,8 @@ fun DesktopHome(
     onAcceptAndTrust: (remoteNodeId: String) -> Unit,
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
+    onAddLibraryRoot: (name: String, path: String) -> Unit,
+    onRemoveLibraryRoot: (name: String) -> Unit,
 ) {
     val oneCol = LocalWindowInfo.current.containerSize.width < 600
 
@@ -50,9 +49,11 @@ fun DesktopHome(
                     onAcceptOnce = onAcceptOnce,
                     onDeny = onDeny,
                 )
-                Card(modifier = Modifier.height(100.dp).width(100.dp)) {
-                    Text("Connect")
-                }
+                LibraryWidget(
+                    model = model,
+                    onAddRoot = onAddLibraryRoot,
+                    onRemoveRoot = onRemoveLibraryRoot
+                )
             }
             val right = @Composable {
                 JobsWidget(
