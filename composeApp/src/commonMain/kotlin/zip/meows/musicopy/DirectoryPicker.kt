@@ -1,12 +1,7 @@
 package zip.meows.musicopy
 
-import androidx.compose.runtime.Composable
-
 expect class DirectoryPicker {
-    companion object {
-        @Composable
-        fun get(): DirectoryPicker
-    }
+    constructor(platformContext: PlatformContext)
 
-    fun start()
+    fun pickDownloadDirectory()
 }

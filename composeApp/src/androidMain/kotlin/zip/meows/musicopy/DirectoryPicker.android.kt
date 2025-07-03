@@ -1,28 +1,13 @@
 package zip.meows.musicopy
 
-import androidx.activity.compose.LocalActivity
-import androidx.compose.runtime.Composable
+actual class DirectoryPicker {
+    private var activity: MainActivity
 
-actual class DirectoryPicker() {
-    lateinit var activity: MainActivity
-        private set
-
-    constructor(activity: MainActivity) : this() {
-        this.activity = activity
+    actual constructor(platformContext: PlatformContext) {
+        this.activity = platformContext.mainActivity
     }
 
-    actual companion object {
-        @Composable
-        actual fun get(): DirectoryPicker {
-            val activity = LocalActivity.current
-            check(activity != null)
-            check(activity is MainActivity)
-
-            return DirectoryPicker(activity)
-        }
-    }
-
-    actual fun start() {
+    actual fun pickDownloadDirectory() {
         activity.observer.openDocumentTree.launch(null)
     }
 }

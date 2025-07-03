@@ -6,9 +6,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import zip.meows.musicopy.CoreViewModel
+import zip.meows.musicopy.PlatformContext
 
 @Composable
 fun DesktopApp(
+    platformContext: PlatformContext,
     viewModel: CoreViewModel = viewModel(),
 ) {
     val model by viewModel.state.collectAsState()

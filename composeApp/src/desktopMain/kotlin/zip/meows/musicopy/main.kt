@@ -31,8 +31,12 @@ fun main() = application {
     ) {
 //        window.minimumSize = Dimension(800, 600)
 
-//        App()
-        DesktopApp()
+        // TODO: separate main for running the mobile app in desktop for hot reload
+        // App()
+
+        val platformContext = PlatformContext(mainWindow = window)
+
+        DesktopApp(platformContext)
 
         Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
             Text("window: ${LocalWindowInfo.current.containerSize}")

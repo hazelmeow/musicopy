@@ -10,8 +10,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 
@@ -52,14 +50,10 @@ class MainActivity : ComponentActivity() {
         observer = AppLifecycleObserver(activityResultRegistry, contentResolver)
         lifecycle.addObserver(observer)
 
+        val platformContext = PlatformContext(this)
+
         setContent {
-            App()
+            App(platformContext)
         }
     }
-}
-
-@Preview
-@Composable
-fun AppAndroidPreview() {
-    App()
 }
