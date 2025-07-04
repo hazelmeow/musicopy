@@ -70,7 +70,9 @@ impl Core {
         // TODO: pass arg for android dir
         let (db, secret_key) = if cfg!(target_os = "android") {
             let db = Database::open_in_memory().context("failed to open database")?;
+
             let secret_key = SecretKey::generate(rand::rngs::OsRng);
+
             (db, secret_key)
         } else {
             let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")

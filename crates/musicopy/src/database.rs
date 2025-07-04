@@ -9,7 +9,7 @@ pub struct Root {
     pub path: String,
 }
 
-pub struct LocalFile {
+pub struct File {
     pub id: u64,
     pub hash_kind: String,
     pub hash: String,
@@ -157,24 +157,31 @@ impl Database {
         Ok(())
     }
 
-    // pub fn get_local_files(&self) -> anyhow::Result<Vec<LocalFile>> {
-    //     let mut stmt = self
-    //         .conn
-    //         .prepare("SELECT id, hash_kind, hash, root, path FROM local_files")
-    //         .expect("should prepare statement");
+    pub fn get_files(&self) -> anyhow::Result<Vec<File>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files")
+            .expect("should prepare statement");
 
-    //     stmt.query_map([], |row| {
-    //         Ok(LocalFile {
-    //             id: row.get(0)?,
-    //             hash_kind: row.get(1)?,
-    //             hash: row.get(2)?,
-    //             root: row.get(3)?,
-    //         })
-    //     })
-    //     .expect("should bind parameters")
-    //     .map(|r| r.map_err(|e| anyhow::anyhow!("failed to map local files: {}", e)))
-    //     .collect()
-    // }
+        stmt.query_and_then([], |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(3)?).context("failed to parse node id")?;
+            let node_id =
+                NodeId::try_from(node_id.as_slice()).context("failed to parse node id")?;
+
+            Ok(File {
+                id: row.get(0)?,
+                hash_kind: row.get(1)?,
+                hash: row.get(2)?,
+                node_id,
+                root: row.get(4)?,
+                path: row.get(5)?,
+                local_path: row.get(6)?,
+            })
+        })
+        .expect("should bind parameters")
+        .collect()
+    }
 }
 
 fn node_id_to_string(node_id: &NodeId) -> String {

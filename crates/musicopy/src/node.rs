@@ -88,7 +88,7 @@ impl Node {
             .discovery_n0()
             .bind()
             .await?;
-        let protocol = Protocol::new(peer_tx);
+        let protocol = Protocol::new(db.clone(), peer_tx);
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
@@ -220,6 +220,22 @@ impl Node {
             }
         }
 
+        // wait for server Index
+        let Some(Ok(message)) = recv.next().await else {
+            log::error!("failed to receive Index message");
+            return Ok(());
+        };
+        let index = match message {
+            ServerMessage::Index(index) => {
+                log::info!("received index with {} items", index.len());
+                index
+            }
+            _ => {
+                log::error!("unexpected message, expected Index: {message:?}");
+                return Ok(());
+            }
+        };
+
         // TODO: open streams and such
 
         loop {
@@ -306,26 +322,28 @@ impl Node {
 
 #[derive(Debug, Clone)]
 struct Protocol {
+    db: Arc<Mutex<Database>>,
     peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
 }
 
 impl Protocol {
     const ALPN: &'static [u8] = b"musicopy/0";
 
-    fn new(peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
-        Self { peer_tx }
+    fn new(db: Arc<Mutex<Database>>, peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
+        Self { db, peer_tx }
     }
 }
 
 impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
+        let db = self.db.clone();
         let handle_tx = self.peer_tx.clone();
         Box::pin(async move {
             // We can get the remote's node id from the connection.
             let node_id = connection.remote_node_id()?;
             println!("accepted connection from {node_id}");
 
-            let mut peer = Peer::new(connection, handle_tx);
+            let mut peer = Peer::new(db, connection, handle_tx);
             peer.run().await?;
 
             peer.connection.closed().await;
@@ -355,15 +373,24 @@ enum ClientMessage {
     Identify(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IndexItem {
+    hash_kind: String,
+    hash: String,
+    root: String,
+    path: String,
+}
+
 /// A message sent by the server end of a connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ServerMessage {
     Identify(String),
     Accepted,
-    Index,
+    Index(Vec<IndexItem>),
 }
 
 struct Peer {
+    db: Arc<Mutex<Database>>,
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
     connected_at: u64,
@@ -373,10 +400,15 @@ struct Peer {
 }
 
 impl Peer {
-    fn new(connection: Connection, handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
+    fn new(
+        db: Arc<Mutex<Database>>,
+        connection: Connection,
+        handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
 
         Self {
+            db,
             connection,
             handle_tx,
             connected_at: SystemTime::now()
@@ -481,7 +513,8 @@ impl Peer {
 
         // send Index message
         // TODO: real index
-        send.send(ServerMessage::Index)
+        let index = self.get_index()?;
+        send.send(ServerMessage::Index(index))
             .await
             .expect("failed to send Index message");
 
@@ -511,5 +544,19 @@ impl Peer {
         self.connection.closed().await;
 
         Ok(())
+    }
+
+    fn get_index(&self) -> anyhow::Result<Vec<IndexItem>> {
+        let db = self.db.lock().unwrap();
+        let files = db.get_files()?;
+        Ok(files
+            .into_iter()
+            .map(|file| IndexItem {
+                hash_kind: file.hash_kind,
+                hash: file.hash,
+                root: file.root,
+                path: file.path,
+            })
+            .collect())
     }
 }
