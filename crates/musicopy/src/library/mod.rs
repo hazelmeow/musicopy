@@ -1,6 +1,4 @@
-mod database;
-
-use crate::library::database::Database;
+use crate::database::{Database, InsertFile};
 use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
@@ -13,6 +11,7 @@ use std::{
 pub struct LibraryRootModel {
     pub name: String,
     pub path: String,
+    pub num_files: u64,
 }
 
 #[derive(Debug, uniffi::Record)]
@@ -30,15 +29,13 @@ pub enum LibraryCommand {
 }
 
 pub struct Library {
+    db: Arc<Mutex<Database>>,
     local_node_id: NodeId,
-    db: Mutex<Database>,
 }
 
 impl Library {
-    pub async fn new(local_node_id: NodeId, db_path: &str) -> anyhow::Result<Arc<Self>> {
-        let db = Mutex::new(Database::open(db_path).context("failed to open database")?);
-
-        let library = Arc::new(Self { local_node_id, db });
+    pub async fn new(db: Arc<Mutex<Database>>, local_node_id: NodeId) -> anyhow::Result<Arc<Self>> {
+        let library = Arc::new(Self { db, local_node_id });
 
         Ok(library)
     }
@@ -97,9 +94,11 @@ impl Library {
     fn spawn_scan(self: &Arc<Self>) {
         let protocol = self.clone();
         tokio::spawn(async move {
+            log::debug!("spawning library scan");
             if let Err(e) = protocol.scan().await {
                 println!("error scanning library: {e:#}");
             }
+            log::debug!("finished library scan");
         });
     }
 
@@ -120,19 +119,21 @@ impl Library {
             (roots, local_files)
         };
 
+        log::info!("scan: scanning {} roots", roots.len());
+
         // remove roots that don't exist
         let roots = roots
             .into_iter()
-            .filter_map(|root| {
-                let path = PathBuf::from(root.path);
+            .filter(|root| {
+                let path = PathBuf::from(&root.path);
                 if path.exists() {
-                    Some(path)
+                    true
                 } else {
                     errors.push(anyhow::anyhow!(
                         "root path `{}` does not exist",
                         path.display()
                     ));
-                    None
+                    false
                 }
             })
             .collect::<Vec<_>>();
@@ -140,18 +141,20 @@ impl Library {
         // walk roots and collect entries
         let (entries, walk_errors): (Vec<_>, Vec<_>) = roots
             .iter()
-            .flat_map(|root_path| {
+            .flat_map(|root| {
                 let walker = globwalk::GlobWalkerBuilder::new(
-                    root_path,
+                    &root.path,
                     "*.{mp3,flac,ogg,m4a,wav,aif,aiff}",
                 )
                 .file_type(globwalk::FileType::FILE)
                 .build()
                 .expect("glob shouldn't fail");
 
-                walker.into_iter().map_ok(move |entry| (root_path, entry))
+                walker.into_iter().map_ok(move |entry| (root, entry))
             })
             .partition_result();
+
+        log::info!("scan: found {} files", entries.len());
 
         // extend errors
         errors.extend(
@@ -160,18 +163,20 @@ impl Library {
                 .map(|e| anyhow::anyhow!("failed to scan file {:?}: {}", e.path(), e)),
         );
 
-        struct ScanItem<'a> {
-            root: &'a Path,
+        struct ScanItem {
+            root: String,
             path: String,
+            local_path: String,
         }
 
         let (local_files, scan_errors): (Vec<_>, Vec<_>) = entries
             .into_iter()
-            .map(|(root_path, entry)| {
+            .map(|(root, entry)| {
+                let local_path = entry.into_path();
+
                 // get path without root
-                let path = entry
-                    .into_path()
-                    .strip_prefix(root_path)
+                let path = local_path
+                    .strip_prefix(&root.path)
                     .context("failed to strip root path prefix")?
                     .to_string_lossy()
                     .to_string();
@@ -179,8 +184,9 @@ impl Library {
                 anyhow::Result::Ok(ScanItem {
                     // hash_kind: "sha256".to_string(),
                     // hash: "".to_string(),
-                    root: root_path,
+                    root: root.name.clone(),
                     path,
+                    local_path: local_path.to_string_lossy().to_string(),
                 })
             })
             .partition_result();
@@ -192,11 +198,29 @@ impl Library {
                 .map(|e: anyhow::Error| e.context("failed to scan file")),
         );
 
+        for error in errors {
+            log::error!("error scanning library: {error:#}");
+        }
+
+        {
+            let mut db = self.db.lock().unwrap();
+            db.insert_files(local_files.iter().map(|item| InsertFile {
+                hash_kind: "sha256",
+                hash: "",
+                node_id: self.local_node_id,
+                root: &item.root,
+                path: &item.path, //TODO
+                local_path: &item.path,
+            }))?;
+        }
+
+        log::info!("scan: inserted {} files into database", local_files.len());
+
         let index = local_files
             .iter()
             .map(|item| {
                 // TODO
-                let full_path = format!("{}/{}", item.root.to_string_lossy(), item.path);
+                let full_path = format!("{}/{}", item.root, item.path);
                 full_path
             })
             .collect::<Vec<String>>();
@@ -216,9 +240,16 @@ impl Library {
             db.get_roots_by_node_id(self.local_node_id)
                 .expect("failed to get local roots")
                 .into_iter()
-                .map(|root| LibraryRootModel {
-                    name: root.name,
-                    path: root.path,
+                .map(|root| {
+                    let count = db
+                        .count_files_by_root(self.local_node_id, &root.name)
+                        .expect("failed to count files"); // TODO
+
+                    LibraryRootModel {
+                        name: root.name,
+                        path: root.path,
+                        num_files: count,
+                    }
                 })
                 .collect()
         };

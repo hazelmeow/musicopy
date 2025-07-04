@@ -1,9 +1,11 @@
+pub mod database;
 pub mod error;
 pub mod file_dialog;
 pub mod library;
 pub mod node;
 
 use crate::{
+    database::Database,
     error::CoreError,
     library::{Library, LibraryCommand, LibraryModel},
     node::{Node, NodeCommand, NodeModel},
@@ -11,7 +13,7 @@ use crate::{
 use anyhow::Context;
 use iroh::{NodeAddr, NodeId, SecretKey};
 use log::{debug, error};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 uniffi::setup_scaffolding!();
@@ -41,19 +43,40 @@ pub struct Core {
 impl Core {
     #[uniffi::constructor]
     pub fn new(event_handler: Arc<dyn EventHandler>) -> Result<Arc<Self>, CoreError> {
-        android_logger::init_once(
-            android_logger::Config::default()
-                .with_max_level(log::LevelFilter::Trace) // limit log level
-                .with_tag("musicopy")
-                .with_filter(
-                    android_logger::FilterBuilder::new()
-                        .parse("debug,iroh=warn")
-                        .build(),
-                ),
-        );
+        #[cfg(target_os = "android")]
+        {
+            android_logger::init_once(
+                android_logger::Config::default()
+                    .with_max_level(log::LevelFilter::Trace) // limit log level
+                    .with_tag("musicopy")
+                    .with_filter(
+                        android_logger::FilterBuilder::new()
+                            .parse("debug,iroh=warn")
+                            .build(),
+                    ),
+            );
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or("debug,iroh=warn"),
+            )
+            .init();
+        }
         log_panics::init();
 
         debug!("core: starting core");
+
+        // TODO: pass arg for android dir
+        let db = if cfg!(target_os = "android") {
+            Database::open_in_memory().context("failed to open database")?
+        } else {
+            let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")
+                .context("failed to get project directories")?;
+            let data_dir = project_dirs.data_local_dir();
+            Database::open_file(&data_dir.join("musicopy.db")).context("failed to open database")?
+        };
+        let db = Arc::new(Mutex::new(db));
 
         // TODO: persist
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -74,7 +97,8 @@ impl Core {
                 builder.block_on(async move {
                     debug!("core: inside async runtime");
 
-                    let (node, run_token) = match Node::new(secret_key).await {
+                    let db2 = db.clone();
+                    let (node, run_token) = match Node::new(secret_key, db2).await {
                         Ok(x) => x,
                         Err(e) => {
                             error!("core: error creating node: {e:#}");
@@ -86,7 +110,7 @@ impl Core {
 
                     // TODO clean this up
                     // TODO pass path to files from app
-                    let library = Library::new(node_id, "TODO").await.unwrap();
+                    let library = Library::new(db, node_id).await.unwrap();
                     tokio::spawn({
                         let library = library.clone();
                         async move {

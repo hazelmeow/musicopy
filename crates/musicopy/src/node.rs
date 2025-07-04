@@ -1,3 +1,4 @@
+use crate::database::Database;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
     Endpoint, NodeAddr, NodeId, SecretKey,
@@ -64,6 +65,7 @@ pub enum NodeCommand {
 
 #[derive(Debug)]
 pub struct Node {
+    db: Arc<Mutex<Database>>,
     router: Router,
     protocol: Protocol,
     peers: Mutex<HashMap<NodeId, PeerHandle>>,
@@ -75,7 +77,10 @@ pub struct NodeRunToken {
 }
 
 impl Node {
-    pub async fn new(secret_key: SecretKey) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
+    pub async fn new(
+        secret_key: SecretKey,
+        db: Arc<Mutex<Database>>,
+    ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
         let (peer_tx, peer_rx) = mpsc::unbounded_channel();
 
         let endpoint = Endpoint::builder()
@@ -90,6 +95,7 @@ impl Node {
             .spawn();
 
         let node = Arc::new(Self {
+            db,
             router,
             protocol,
             peers: Mutex::new(HashMap::new()),

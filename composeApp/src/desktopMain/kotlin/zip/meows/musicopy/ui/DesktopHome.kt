@@ -25,6 +25,7 @@ fun DesktopHome(
     onDeny: (remoteNodeId: String) -> Unit,
     onAddLibraryRoot: (name: String, path: String) -> Unit,
     onRemoveLibraryRoot: (name: String) -> Unit,
+    onRescanLibrary: () -> Unit,
 ) {
     val oneCol = LocalWindowInfo.current.containerSize.width < 600
 
@@ -52,7 +53,8 @@ fun DesktopHome(
                 LibraryWidget(
                     model = model,
                     onAddRoot = onAddLibraryRoot,
-                    onRemoveRoot = onRemoveLibraryRoot
+                    onRemoveRoot = onRemoveLibraryRoot,
+                    onRescan = onRescanLibrary,
                 )
             }
             val right = @Composable {

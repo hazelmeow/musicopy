@@ -23,7 +23,8 @@ fun DesktopApp(
                 onAcceptOnce = { nodeId -> viewModel.instance.acceptConnection(nodeId) },
                 onDeny = { nodeId -> viewModel.instance.denyConnection(nodeId) },
                 onAddLibraryRoot = { name, path -> viewModel.instance.addLibraryRoot(name, path) },
-                onRemoveLibraryRoot = { name -> viewModel.instance.removeLibraryRoot(name) }
+                onRemoveLibraryRoot = { name -> viewModel.instance.removeLibraryRoot(name) },
+                onRescanLibrary = { viewModel.instance.rescanLibrary() }
             )
         }
     }

@@ -36,6 +36,7 @@ import com.composables.core.DialogState
 import com.composables.core.Scrim
 import kotlinx.coroutines.launch
 import musicopy.composeapp.generated.resources.Res
+import musicopy.composeapp.generated.resources.cell_tower_24px
 import musicopy.composeapp.generated.resources.content_copy_24px
 import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.painterResource
@@ -49,6 +50,7 @@ fun LibraryWidget(
     model: Model,
     onAddRoot: (name: String, path: String) -> Unit,
     onRemoveRoot: (name: String) -> Unit,
+    onRescan: () -> Unit,
 ) {
     val localRoots = model.library.localRoots
 
@@ -113,7 +115,6 @@ fun LibraryWidget(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().height(48.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -122,7 +123,19 @@ fun LibraryWidget(
                         modifier = Modifier.padding(start = 8.dp)
                     )
 
+                    Box(modifier = Modifier.weight(1f))
+
                     if (localRoots.isNotEmpty()) {
+                        IconButton(
+                            onClick = onRescan,
+                            //                    modifier = Modifier.background(MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(
+                                painter = painterResource(Res.drawable.cell_tower_24px),
+                                contentDescription = "Rescan library button",
+                            )
+                        }
+
                         IconButton(
                             onClick = onStartAddRoot,
                             //                    modifier = Modifier.background(MaterialTheme.colorScheme.primary)
@@ -168,7 +181,10 @@ private fun LibraryRoot(root: LibraryRootModel, onRemoveRoot: (String) -> Unit) 
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.padding(start = 8.dp)) {
-                    Text("${root.name}", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "${root.name} (${root.numFiles})",
+                        style = MaterialTheme.typography.labelLarge
+                    )
                     Text("${root.path}", style = MaterialTheme.typography.labelMedium)
                 }
 
