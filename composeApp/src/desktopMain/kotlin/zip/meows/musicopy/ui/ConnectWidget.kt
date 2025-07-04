@@ -90,7 +90,7 @@ fun ConnectWidget(
                     remoteNodeName = targetState.name,
                     onAcceptAndTrust = { onAcceptAndTrust(targetState.nodeId) },
                     onAcceptOnce = { onAcceptOnce(targetState.nodeId) },
-                    onDeny = { onAcceptOnce(targetState.nodeId) },
+                    onDeny = { onDeny(targetState.nodeId) },
                 )
             } ?: run {
                 DefaultScreen(

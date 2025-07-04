@@ -17,3 +17,17 @@ impl From<anyhow::Error> for CoreError {
         Self { e }
     }
 }
+
+/// Creates a CoreError by wrapping anyhow::anyhow!.
+macro_rules! core_error {
+    ($msg:literal $(,)?) => {
+        CoreError::from(anyhow::anyhow!($msg))
+    };
+    ($err:expr $(,)?) => {
+        CoreError::from(anyhow::anyhow!($err))
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        CoreError::from(anyhow::anyhow!($fmt, $($arg)*))
+    };
+}
+pub(crate) use core_error;

@@ -12,13 +12,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
+import uniffi.musicopy.CoreException
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
 import zip.meows.musicopy.ui.screens.ConnectQRScreen
 import zip.meows.musicopy.ui.screens.ConnectingScreen
@@ -42,6 +47,26 @@ fun App(
     val model by viewModel.state.collectAsState()
 
     val directoryPicker = remember { DirectoryPicker(platformContext) }
+
+    val scope = rememberCoroutineScope()
+    var connectCount by remember { mutableStateOf(0) }
+    val isConnecting = connectCount > 0
+
+    val onConnect = { nodeId: String ->
+        scope.launch {
+            connectCount += 1
+            try {
+                viewModel.instance.connect(nodeId = nodeId)
+                navController.navigate(AppScreen.Connecting.name)
+            } catch (e: CoreException) {
+                // TODO
+                println("error during connect: $e")
+            } finally {
+                connectCount -= 1
+            }
+        }
+        Unit
+    }
 
     MaterialTheme {
         Scaffold() { innerPadding ->
@@ -91,10 +116,8 @@ fun App(
                 composable(route = AppScreen.ConnectQR.name) {
                     model?.let {
                         ConnectQRScreen(
-                            onSubmit = { nodeId ->
-                                viewModel.instance.connect(nodeId = nodeId)
-                                navController.navigate(AppScreen.Connecting.name)
-                            },
+                            isConnecting = isConnecting,
+                            onSubmit = onConnect,
                             onCancel = {
                                 navController.popBackStack(AppScreen.Home.name, inclusive = false)
                             }
@@ -104,10 +127,8 @@ fun App(
                 composable(route = AppScreen.ConnectManually.name) {
                     model?.let {
                         ConnectManuallyScreen(
-                            onSubmit = { nodeId ->
-                                viewModel.instance.connect(nodeId = nodeId)
-                                navController.navigate(AppScreen.Connecting.name)
-                            },
+                            isConnecting = isConnecting,
+                            onSubmit = onConnect,
                             onCancel = {
                                 navController.popBackStack(AppScreen.Home.name, inclusive = false)
                             }

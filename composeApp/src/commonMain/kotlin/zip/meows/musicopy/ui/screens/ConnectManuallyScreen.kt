@@ -19,6 +19,7 @@ import zip.meows.musicopy.ui.components.SectionCard
 
 @Composable
 fun ConnectManuallyScreen(
+    isConnecting: Boolean,
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -69,7 +70,19 @@ fun ConnectManuallyScreen(
             onCancel = onCancel,
             onAction = { onSubmit(value) },
             actionLabel = "Connect",
-            actionEnabled = isValid
+            actionEnabled = isValid,
+            actionLoading = isConnecting
         )
     }
+}
+
+@Composable
+fun ConnectManuallyScreenSandbox() {
+    var isConnecting by remember { mutableStateOf(false) }
+
+    ConnectManuallyScreen(
+        isConnecting = isConnecting,
+        onSubmit = { isConnecting = true },
+        onCancel = { isConnecting = false },
+    )
 }

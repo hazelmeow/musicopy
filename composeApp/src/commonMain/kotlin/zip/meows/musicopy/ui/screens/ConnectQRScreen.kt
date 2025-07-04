@@ -15,6 +15,7 @@ import zip.meows.musicopy.ui.components.SectionCard
 
 @Composable
 fun ConnectQRScreen(
+    isConnecting: Boolean,
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
 ) {

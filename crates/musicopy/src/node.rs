@@ -23,7 +23,7 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicBool},
     time::{Duration, SystemTime},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -73,7 +73,10 @@ pub struct NodeModel {
 
 #[derive(Debug)]
 pub enum NodeCommand {
-    Connect(NodeAddr),
+    Connect {
+        addr: NodeAddr,
+        callback: oneshot::Sender<anyhow::Result<()>>,
+    },
 
     AcceptConnection(NodeId),
     DenyConnection(NodeId),
@@ -151,11 +154,15 @@ impl Node {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        NodeCommand::Connect(addr) => {
-                            let this = self.clone();
+                        NodeCommand::Connect { addr, callback } => {
+                            let node = self.clone();
                             tokio::task::spawn(async move {
-                                // TODO: return error
-                                let _ = this.connect(addr).await;
+                                log::debug!("starting connect");
+                                let res = node.connect(addr).await;
+                                log::debug!("connect result: {res:?}");
+                                if let Err(e) = callback.send(res) {
+                                    log::error!("failed to send res: {e:?}");
+                                }
                             });
                         },
 

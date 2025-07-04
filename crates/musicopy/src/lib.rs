@@ -6,14 +6,17 @@ pub mod node;
 
 use crate::{
     database::Database,
-    error::CoreError,
+    error::{CoreError, core_error},
     library::{Library, LibraryCommand, LibraryModel},
     node::{Node, NodeCommand, NodeModel},
 };
 use anyhow::Context;
 use iroh::{NodeAddr, NodeId, SecretKey};
 use log::{debug, error};
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::sync::mpsc;
 
 uniffi::setup_scaffolding!();
@@ -180,15 +183,24 @@ impl Core {
         }))
     }
 
-    pub fn connect(&self, node_id: &str) -> Result<(), CoreError> {
+    pub async fn connect(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
         let node_addr = NodeAddr::from(node_id);
 
+        let (callback_tx, callback_rx) = tokio::sync::oneshot::channel();
+
         self.node_tx
-            .send(NodeCommand::Connect(node_addr))
+            .send(NodeCommand::Connect {
+                addr: node_addr,
+                callback: callback_tx,
+            })
             .context("failed to send to node thread")?;
 
-        Ok(())
+        async_std::future::timeout(Duration::from_secs(10), callback_rx)
+            .await
+            .map_err(|_elapsed| core_error!("connect timed out"))?
+            .map_err(|_dropped| core_error!("connect failed, sender dropped"))?
+            .map_err(CoreError::from)
     }
 
     pub fn accept_connection(&self, node_id: &str) -> Result<(), CoreError> {
