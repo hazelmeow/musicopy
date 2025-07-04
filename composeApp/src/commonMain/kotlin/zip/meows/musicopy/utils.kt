@@ -1,7 +1,7 @@
 package zip.meows.musicopy
 
 import kotlinx.datetime.Clock
-import uniffi.musicopy.ConnectionModel
+import uniffi.musicopy.ServerModel
 
 fun shortenNodeId(nodeId: String): String {
     return "${nodeId.slice(0..<6)}...${nodeId.slice((nodeId.length - 6)..<(nodeId.length))}"
@@ -14,8 +14,8 @@ fun mockNodeId(): String {
         .joinToString("")
 }
 
-fun mockConnectionModel(): ConnectionModel {
-    return ConnectionModel(
+fun mockServerModel(): ServerModel {
+    return ServerModel(
         name = "My Phone",
         nodeId = mockNodeId(),
         connectedAt = Clock.System.now().epochSeconds.toULong(),

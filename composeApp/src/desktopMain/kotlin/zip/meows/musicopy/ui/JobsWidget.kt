@@ -28,17 +28,17 @@ import androidx.compose.ui.unit.dp
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.ConnectionModel
 import uniffi.musicopy.Model
+import uniffi.musicopy.ServerModel
 import zip.meows.musicopy.shortenNodeId
 
 @Composable
 fun JobsWidget(
     model: Model,
 ) {
-    val activeConnections = model.node.activeConnections
+    val activeServers = model.node.activeServers
 
-    val numJobs = activeConnections.size
+    val numJobs = activeServers.size
     val visible = numJobs > 0
 
     AnimatedVisibility(visible = visible) {
@@ -59,7 +59,7 @@ fun JobsWidget(
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    for (connection in activeConnections) {
+                    for (connection in activeServers) {
                         ActiveConnectionJob(connection)
                     }
                 }
@@ -69,7 +69,7 @@ fun JobsWidget(
 }
 
 @Composable
-private fun ActiveConnectionJob(connection: ConnectionModel) {
+private fun ActiveConnectionJob(connection: ServerModel) {
     Job(
         labelLeft = {
             Text("Connected to ${connection.name}", style = MaterialTheme.typography.labelLarge)

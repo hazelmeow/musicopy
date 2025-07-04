@@ -31,7 +31,7 @@ use tokio_util::{
 
 /// Model of an incoming connection.
 #[derive(Debug, uniffi::Record)]
-pub struct ConnectionModel {
+pub struct ServerModel {
     pub name: String,
     pub node_id: String,
     pub connected_at: u64,
@@ -64,17 +64,11 @@ pub struct NodeModel {
     conn_success: u64,
     conn_direct: u64,
 
-    active_connections: Vec<ConnectionModel>,
-    pending_connections: Vec<ConnectionModel>,
+    active_servers: Vec<ServerModel>,
+    pending_servers: Vec<ServerModel>,
 
     active_clients: Vec<ClientModel>,
     pending_clients: Vec<ClientModel>,
-}
-
-#[derive(Debug)]
-pub enum PeerState {
-    Waiting,
-    Accepted,
 }
 
 #[derive(Debug)]
@@ -95,13 +89,13 @@ pub struct Node {
 
     client_handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
 
-    peers: Mutex<HashMap<NodeId, PeerHandle>>,
+    servers: Mutex<HashMap<NodeId, ServerHandle>>,
     clients: Mutex<HashMap<NodeId, ClientHandle>>,
 }
 
 #[derive(Debug)]
 pub struct NodeRunToken {
-    peer_rx: mpsc::UnboundedReceiver<(NodeId, PeerHandle)>,
+    server_handle_rx: mpsc::UnboundedReceiver<(NodeId, ServerHandle)>,
     client_handle_rx: mpsc::UnboundedReceiver<(NodeId, ClientHandle)>,
 }
 
@@ -110,7 +104,7 @@ impl Node {
         secret_key: SecretKey,
         db: Arc<Mutex<Database>>,
     ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
-        let (peer_tx, peer_rx) = mpsc::unbounded_channel();
+        let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
         let (client_handle_tx, client_handle_rx) = mpsc::unbounded_channel();
 
         let endpoint = Endpoint::builder()
@@ -118,7 +112,7 @@ impl Node {
             .discovery_n0()
             .bind()
             .await?;
-        let protocol = Protocol::new(db.clone(), peer_tx);
+        let protocol = Protocol::new(db.clone(), server_handle_tx);
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
@@ -131,12 +125,12 @@ impl Node {
 
             client_handle_tx,
 
-            peers: Mutex::new(HashMap::new()),
+            servers: Mutex::new(HashMap::new()),
             clients: Mutex::new(HashMap::new()),
         });
 
         let node_run = NodeRunToken {
-            peer_rx,
+            server_handle_rx,
             client_handle_rx,
         };
 
@@ -149,7 +143,7 @@ impl Node {
         run_token: NodeRunToken,
     ) -> anyhow::Result<()> {
         let NodeRunToken {
-            mut peer_rx,
+            mut server_handle_rx,
             mut client_handle_rx,
         } = run_token;
 
@@ -166,19 +160,19 @@ impl Node {
                         },
 
                         NodeCommand::AcceptConnection(node_id) => {
-                            let peers = self.peers.lock().unwrap();
-                            if let Some(peer_handle) = peers.get(&node_id) {
-                                peer_handle.tx.send(PeerCommand::Accept).expect("failed to send accept command");
+                            let servers = self.servers.lock().unwrap();
+                            if let Some(server_handle) = servers.get(&node_id) {
+                                server_handle.tx.send(ServerCommand::Accept).expect("failed to send accept command");
                             } else {
-                                log::error!("AcceptConnection: no peer found with node_id: {node_id}");
+                                log::error!("AcceptConnection: no server found with node_id: {node_id}");
                             }
                         },
                         NodeCommand::DenyConnection(node_id) => {
-                            let peers = self.peers.lock().unwrap();
-                            if let Some(peer_handle) = peers.get(&node_id) {
-                                peer_handle.tx.send(PeerCommand::Close).expect("failed to send close command");
+                            let servers = self.servers.lock().unwrap();
+                            if let Some(server_handle) = servers.get(&node_id) {
+                                server_handle.tx.send(ServerCommand::Close).expect("failed to send close command");
                             } else {
-                                log::error!("DenyConnection: no peer found with node_id: {node_id}");
+                                log::error!("DenyConnection: no server found with node_id: {node_id}");
                             }
                         },
 
@@ -186,9 +180,9 @@ impl Node {
                     }
                 }
 
-                Some((peer_id, peer_handle)) = peer_rx.recv() => {
-                    let mut peers = self.peers.lock().unwrap();
-                    peers.insert(peer_id, peer_handle);
+                Some((server_id, server_handle)) = server_handle_rx.recv() => {
+                    let mut servers = self.servers.lock().unwrap();
+                    servers.insert(server_id, server_handle);
                 }
 
                 Some((client_id, client_handle)) = client_handle_rx.recv() => {
@@ -238,12 +232,12 @@ impl Node {
 
         let metrics = self.router.endpoint().metrics();
 
-        let (active_connections, pending_connections) = {
-            let peers = self.peers.lock().unwrap();
-            let (mut active_connections, mut pending_connections) = peers
+        let (active_servers, pending_servers) = {
+            let servers = self.servers.lock().unwrap();
+            let (mut active_servers, mut pending_servers) = servers
                 .iter()
-                .map(|(node_id, peer_handle)| {
-                    let accepted = peer_handle
+                .map(|(node_id, server_handle)| {
+                    let accepted = server_handle
                         .accepted
                         .load(std::sync::atomic::Ordering::Relaxed);
 
@@ -256,10 +250,10 @@ impl Node {
                         .and_then(|info| info.latency)
                         .map(|latency| latency.as_millis() as u64);
 
-                    let model = ConnectionModel {
+                    let model = ServerModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
-                        connected_at: peer_handle.connected_at,
+                        connected_at: server_handle.connected_at,
                         connection_type,
                         latency_ms,
                     };
@@ -267,9 +261,9 @@ impl Node {
                     if accepted { Ok(model) } else { Err(model) }
                 })
                 .partition_result::<Vec<_>, Vec<_>, _, _>();
-            active_connections.sort_by_key(|c| c.connected_at);
-            pending_connections.sort_by_key(|c| c.connected_at);
-            (active_connections, pending_connections)
+            active_servers.sort_by_key(|c| c.connected_at);
+            pending_servers.sort_by_key(|c| c.connected_at);
+            (active_servers, pending_servers)
         };
 
         let (active_clients, pending_clients) = {
@@ -319,8 +313,8 @@ impl Node {
             conn_success: metrics.magicsock.connection_handshake_success.get(),
             conn_direct: metrics.magicsock.connection_became_direct.get(),
 
-            active_connections,
-            pending_connections,
+            active_servers,
+            pending_servers,
 
             active_clients,
             pending_clients,
@@ -331,27 +325,33 @@ impl Node {
 #[derive(Debug, Clone)]
 struct Protocol {
     db: Arc<Mutex<Database>>,
-    peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+    server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
 }
 
 impl Protocol {
     const ALPN: &'static [u8] = b"musicopy/0";
 
-    fn new(db: Arc<Mutex<Database>>, peer_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>) -> Self {
-        Self { db, peer_tx }
+    fn new(
+        db: Arc<Mutex<Database>>,
+        server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+    ) -> Self {
+        Self {
+            db,
+            server_handle_tx,
+        }
     }
 }
 
 impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
-        let handle_tx = self.peer_tx.clone();
+        let server_handle_tx = self.server_handle_tx.clone();
         Box::pin(async move {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
 
-            let peer = Peer::new(db, connection, handle_tx);
-            peer.run().await?;
+            let server = Server::new(db, connection, server_handle_tx);
+            server.run().await?;
 
             Ok(())
         })
@@ -381,32 +381,32 @@ enum ServerMessage {
 }
 
 #[derive(Debug)]
-enum PeerCommand {
+enum ServerCommand {
     Accept,
 
     Close,
 }
 
 #[derive(Debug, Clone)]
-struct PeerHandle {
+struct ServerHandle {
     connected_at: u64,
     accepted: Arc<AtomicBool>,
-    tx: mpsc::UnboundedSender<PeerCommand>,
+    tx: mpsc::UnboundedSender<ServerCommand>,
 }
 
-struct Peer {
+struct Server {
     db: Arc<Mutex<Database>>,
     connection: Connection,
-    handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+    handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     connected_at: u64,
     accepted: Arc<AtomicBool>,
 }
 
-impl Peer {
+impl Server {
     fn new(
         db: Arc<Mutex<Database>>,
         connection: Connection,
-        handle_tx: mpsc::UnboundedSender<(NodeId, PeerHandle)>,
+        handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     ) -> Self {
         Self {
             db,
@@ -453,7 +453,7 @@ impl Peer {
         match message {
             ClientMessage::Identify(name) => {
                 // TODO: store
-                log::debug!("peer identified as {name}");
+                log::debug!("client identified as {name}");
             }
             _ => {
                 log::error!("unexpected message, expected Identify: {message:?}");
@@ -471,24 +471,24 @@ impl Peer {
         self.handle_tx
             .send((
                 remote_node_id,
-                PeerHandle {
+                ServerHandle {
                     connected_at: self.connected_at,
                     accepted: self.accepted.clone(),
                     tx: tx.clone(),
                 },
             ))
-            .expect("failed to send peer handle");
+            .expect("failed to send server handle");
 
         // waiting loop, wait for user to accept or deny the connection
         loop {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        PeerCommand::Accept => {
+                        ServerCommand::Accept => {
                             // continue to next state
                             break;
                         },
-                        PeerCommand::Close => {
+                        ServerCommand::Close => {
                             self.connection.close(0u32.into(), b"close");
                             return Ok(());
                         },
@@ -522,10 +522,10 @@ impl Peer {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        PeerCommand::Accept => {
+                        ServerCommand::Accept => {
                             log::warn!("unexpected Accept command in main loop");
                         },
-                        PeerCommand::Close => {
+                        ServerCommand::Close => {
                             self.connection.close(0u32.into(), b"close");
                             break;
                         },

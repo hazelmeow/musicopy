@@ -55,7 +55,7 @@ fun ConnectWidget(
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
 ) {
-    var nextPending = model.node.pendingConnections.firstOrNull()
+    var nextPending = model.node.pendingServers.firstOrNull()
 
     Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(1f)
