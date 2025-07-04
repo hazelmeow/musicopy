@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -33,12 +35,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.unit.dp
 import io.github.alexzhirkevich.qrose.QrData
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import io.github.alexzhirkevich.qrose.text
+import kotlinx.coroutines.runBlocking
+import musicopy.composeapp.generated.resources.Res
+import musicopy.composeapp.generated.resources.content_copy_24px
+import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 import zip.meows.musicopy.shortenNodeId
+import zip.meows.musicopy.toClipEntry
 
 @Composable
 fun ConnectWidget(
@@ -125,7 +133,7 @@ private fun DefaultScreen(
         Row {
             Text("${localNodeId.slice(0..<6)}...")
 
-            Text("copy btn")
+            CopyIconButton(localNodeId, "Copy node ID")
 
             Box(modifier = Modifier.weight(1f))
         }
@@ -182,3 +190,25 @@ private fun PendingScreen(
         }
     }
 }
+
+@Composable
+private fun CopyIconButton(textToCopy: String, contentDescription: String) {
+    val clipboard = LocalClipboard.current
+
+    IconButton(
+        onClick = {
+            runBlocking {
+                val clip = toClipEntry(textToCopy)
+                clipboard.setClipEntry(clip)
+                // not supported in CMP
+                // Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
+        },
+    ) {
+        Icon(
+            painter = painterResource(Res.drawable.content_copy_24px),
+            contentDescription = contentDescription
+        )
+    }
+}
+
