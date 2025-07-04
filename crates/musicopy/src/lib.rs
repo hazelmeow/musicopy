@@ -68,18 +68,40 @@ impl Core {
         debug!("core: starting core");
 
         // TODO: pass arg for android dir
-        let db = if cfg!(target_os = "android") {
-            Database::open_in_memory().context("failed to open database")?
+        let (db, secret_key) = if cfg!(target_os = "android") {
+            let db = Database::open_in_memory().context("failed to open database")?;
+            let secret_key = SecretKey::generate(rand::rngs::OsRng);
+            (db, secret_key)
         } else {
             let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")
                 .context("failed to get project directories")?;
             let data_dir = project_dirs.data_local_dir();
-            Database::open_file(&data_dir.join("musicopy.db")).context("failed to open database")?
+
+            std::fs::create_dir_all(data_dir).context("failed to create data directory")?;
+
+            let db = Database::open_file(&data_dir.join("musicopy.db"))
+                .context("failed to open database")?;
+
+            let key_path = data_dir.join("secret_key");
+            let secret_key = if key_path.exists() {
+                let key_bytes =
+                    std::fs::read(&key_path).context("failed to read secret key file")?;
+                SecretKey::from_bytes(
+                    key_bytes[..32]
+                        .try_into()
+                        .context("failed to parse secret key file")?,
+                )
+            } else {
+                let new_key = SecretKey::generate(rand::rngs::OsRng);
+                std::fs::write(&key_path, new_key.to_bytes())
+                    .context("failed to write secret key file")?;
+                new_key
+            };
+
+            (db, secret_key)
         };
         let db = Arc::new(Mutex::new(db));
 
-        // TODO: persist
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let node_id = NodeId::from(secret_key.public());
 
         let (node_tx, node_rx) = mpsc::unbounded_channel();
