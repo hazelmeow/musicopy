@@ -195,6 +195,19 @@ impl<'a> App<'a> {
         match parts[0] {
             "q" => self.events.send(AppEvent::Exit),
 
+            "accept" => {
+                app_log!("accepting pending servers");
+
+                let Some(model) = &self.model else {
+                    anyhow::bail!("model not initialized");
+                };
+
+                for server in &model.node.pending_servers {
+                    app_log!("accepting server: {}", server.node_id);
+                    self.core.accept_connection(&server.node_id)?;
+                }
+            }
+
             "help" | "h" | "?" => {
                 app_send!(AppEvent::Screen(AppScreen::Help));
             }
