@@ -22,21 +22,20 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import kotlinx.coroutines.launch
 import uniffi.musicopy.CoreException
+import zip.meows.musicopy.ui.screens.ConnectManually
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
+import zip.meows.musicopy.ui.screens.ConnectQR
 import zip.meows.musicopy.ui.screens.ConnectQRScreen
-import zip.meows.musicopy.ui.screens.ConnectingScreen
+import zip.meows.musicopy.ui.screens.Home
+import zip.meows.musicopy.ui.screens.WaitingScreen
 import zip.meows.musicopy.ui.screens.HomeScreen
-
-enum class AppScreen() {
-    Home(),
-    ConnectQR(),
-    ConnectManually(),
-    Connecting(),
-    PreTransfer(),
-    Transfer()
-}
+import zip.meows.musicopy.ui.screens.PreTransfer
+import zip.meows.musicopy.ui.screens.PreTransferScreen
+import zip.meows.musicopy.ui.screens.Transfer
+import zip.meows.musicopy.ui.screens.Waiting
 
 @Composable
 fun App(
@@ -57,7 +56,7 @@ fun App(
             connectCount += 1
             try {
                 viewModel.instance.connect(nodeId = nodeId)
-                navController.navigate(AppScreen.Connecting.name)
+                navController.navigate(Waiting(nodeId = nodeId))
             } catch (e: CoreException) {
                 // TODO
                 println("error during connect: $e")
@@ -72,7 +71,7 @@ fun App(
         Scaffold() { innerPadding ->
             NavHost(
                 navController = navController,
-                startDestination = AppScreen.Home.name,
+                startDestination = Home,
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(innerPadding),
                 enterTransition = {
@@ -100,7 +99,7 @@ fun App(
                     )
                 }
             ) {
-                composable(route = AppScreen.Home.name) {
+                composable<Home> {
                     // TODO: make this better...
                     model?.let {
                         HomeScreen(
@@ -108,44 +107,76 @@ fun App(
                             onPickDownloadDirectory = {
                                 directoryPicker.pickDownloadDirectory()
                             },
-                            onConnectQRButtonClicked = { navController.navigate(AppScreen.ConnectQR.name) },
-                            onConnectManuallyButtonClicked = { navController.navigate(AppScreen.ConnectManually.name) }
+                            onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
+                            onConnectManuallyButtonClicked = {
+                                navController.navigate(
+                                    ConnectManually
+                                )
+                            }
                         )
                     }
                 }
-                composable(route = AppScreen.ConnectQR.name) {
+                composable<ConnectQR> {
                     model?.let {
                         ConnectQRScreen(
                             isConnecting = isConnecting,
                             onSubmit = onConnect,
                             onCancel = {
-                                navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                                navController.popBackStack(Home, inclusive = false)
                             }
                         )
                     }
                 }
-                composable(route = AppScreen.ConnectManually.name) {
+                composable<ConnectManually> {
                     model?.let {
                         ConnectManuallyScreen(
                             isConnecting = isConnecting,
                             onSubmit = onConnect,
                             onCancel = {
-                                navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                                navController.popBackStack(Home, inclusive = false)
                             }
                         )
                     }
                 }
-                composable(route = AppScreen.Connecting.name) {
-                    ConnectingScreen(
-                        onCancel = {
-                            navController.popBackStack(AppScreen.Home.name, inclusive = false)
+                composable<Waiting> { backStackEntry ->
+                    val waiting: Waiting = backStackEntry.toRoute()
+                    val nodeId = waiting.nodeId
+                    model?.let { model ->
+                        val pendingClient =
+                            model.node.pendingClients.find { x -> x.nodeId == nodeId }
+                        val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
+
+                        if (activeClient != null) {
+                            navController.navigate(PreTransfer(nodeId = nodeId))
                         }
-                    )
+
+                        pendingClient?.let { clientModel ->
+                            WaitingScreen(
+                                clientModel = clientModel,
+                                onCancel = {
+                                    navController.popBackStack(Home, inclusive = false)
+                                }
+                            )
+                        }
+                    }
                 }
-                composable(route = AppScreen.PreTransfer.name) {
-                    Text("pretransfer")
+                composable<PreTransfer> { backStackEntry ->
+                    val preTransfer: PreTransfer = backStackEntry.toRoute()
+                    val nodeId = preTransfer.nodeId
+                    model?.let { model ->
+                        val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
+
+                        activeClient?.let { clientModel ->
+                            PreTransferScreen(
+                                clientModel = clientModel,
+                                onCancel = {
+                                    navController.popBackStack(Home, inclusive = false)
+                                }
+                            )
+                        }
+                    }
                 }
-                composable(route = AppScreen.Transfer.name) {
+                composable<Transfer> {
                     Text("transfer")
                 }
             }

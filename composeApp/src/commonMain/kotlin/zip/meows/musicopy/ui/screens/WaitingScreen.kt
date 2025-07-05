@@ -3,18 +3,16 @@ package zip.meows.musicopy.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import zip.meows.musicopy.ui.QRScanner
+import uniffi.musicopy.ClientModel
+import zip.meows.musicopy.shortenNodeId
 import zip.meows.musicopy.ui.components.SectionCard
 
 @Composable
-fun ConnectingScreen(
+fun WaitingScreen(
+    clientModel: ClientModel,
     onCancel: () -> Unit,
 ) {
     Column(
@@ -23,9 +21,11 @@ fun ConnectingScreen(
         verticalArrangement = Arrangement.Center,
     ) {
         SectionCard(
-            title = "Connecting",
+            title = "Waiting to connect",
             body = {
-                Text("beep boop")
+                Text("Connected to ${shortenNodeId(clientModel.nodeId)}")
+
+                Text("Press Accept on the other device to continue.")
             },
             onCancel = onCancel,
         )

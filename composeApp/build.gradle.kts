@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.composeHotReload)
+    alias(libs.plugins.serialization)
 
     id("dev.gobley.cargo") version "0.2.0"
     id("dev.gobley.rust") version "0.2.0"
