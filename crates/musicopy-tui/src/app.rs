@@ -1,0 +1,221 @@
+use crate::event::{Event, EventHandler, app_send};
+use anyhow::Context;
+use musicopy::{Core, CoreOptions, Model};
+use ratatui::{
+    DefaultTerminal,
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+};
+use std::sync::Arc;
+use tui_widgets::prompts::{State, Status, TextState};
+
+/// Application.
+#[derive(Debug)]
+pub struct App<'a> {
+    pub running: bool,
+    pub events: EventHandler,
+
+    pub core: Arc<Core>,
+
+    pub mode: AppMode,
+    pub screen: AppScreen,
+
+    pub messages: Vec<String>,
+
+    pub command_state: TextState<'a>,
+    pub model: Option<Model>, // TODO: would be nice to make this not an option
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppScreen {
+    #[default]
+    Home,
+    Log,
+    Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppMode {
+    #[default]
+    Default,
+    Command,
+}
+
+/// Application events.
+#[derive(Debug)]
+pub enum AppEvent {
+    Log(String),
+
+    Exit,
+
+    CommandMode,
+    ExitMode,
+
+    Screen(AppScreen),
+
+    Model(Box<Model>),
+}
+
+macro_rules! app_log {
+    ($($arg:tt)*) => {
+        let _ = crate::event::app_send!(crate::app::AppEvent::Log(format!($($arg)*)));
+    };
+}
+pub(crate) use app_log;
+
+impl<'a> App<'a> {
+    /// Constructs a new instance of [`App`].
+    pub async fn new() -> anyhow::Result<Self> {
+        // initialize as early as possible
+        let events = EventHandler::new();
+
+        let core = Core::new(
+            Arc::new(AppEventHandler),
+            CoreOptions {
+                init_logging: false,
+                in_memory: true,
+            },
+        )?;
+
+        Ok(Self {
+            running: true,
+            events,
+
+            core,
+
+            mode: AppMode::default(),
+            screen: AppScreen::default(),
+
+            messages: Vec::new(),
+
+            command_state: TextState::default(),
+            model: None,
+        })
+    }
+
+    /// Run the application's main loop.
+    pub async fn run(mut self, mut terminal: DefaultTerminal) -> anyhow::Result<()> {
+        while self.running {
+            terminal.draw(|frame| self.render(frame))?;
+            match self.events.next().await? {
+                Event::Tick => self.tick(),
+                Event::Crossterm(event) => match event {
+                    crossterm::event::Event::Key(key_event) => self.handle_key_events(key_event)?,
+                    _ => {}
+                },
+                Event::App(app_event) => self
+                    .handle_app_events(app_event)
+                    .context("handling app event failed")?,
+            }
+        }
+
+        // shut down core
+        self.core.shutdown()?;
+
+        Ok(())
+    }
+
+    /// Handles the key events and updates the state of [`App`].
+    pub fn handle_key_events(&mut self, key_event: KeyEvent) -> anyhow::Result<()> {
+        match self.mode {
+            AppMode::Default => match (self.screen, key_event.code) {
+                // : or / to enter command mode
+                (_, KeyCode::Char(':') | KeyCode::Char('/')) => {
+                    self.events.send(AppEvent::CommandMode)
+                }
+
+                // change screens
+                (_, KeyCode::Char('1')) => self.events.send(AppEvent::Screen(AppScreen::Home)),
+                (_, KeyCode::Char('2')) => self.events.send(AppEvent::Screen(AppScreen::Log)),
+                (_, KeyCode::Char('?')) => self.events.send(AppEvent::Screen(AppScreen::Help)),
+
+                // esc or q to quit
+                (_, KeyCode::Esc | KeyCode::Char('q')) => self.events.send(AppEvent::Exit),
+                // ctrl+c to quit
+                (_, KeyCode::Char('c' | 'C')) if key_event.modifiers == KeyModifiers::CONTROL => {
+                    self.events.send(AppEvent::Exit)
+                }
+
+                _ => {}
+            },
+
+            AppMode::Command => {
+                self.command_state.handle_key_event(key_event);
+
+                match self.command_state.status() {
+                    Status::Done => {
+                        let command = self.command_state.value().to_string();
+
+                        if let Err(e) = self.handle_command(command) {
+                            app_log!("Error: {e:#}");
+                        }
+
+                        self.events.send(AppEvent::ExitMode);
+                    }
+                    Status::Aborted => self.events.send(AppEvent::ExitMode),
+                    Status::Pending => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles the tick event of the terminal.
+    pub fn tick(&self) {}
+
+    pub fn handle_app_events(&mut self, app_event: AppEvent) -> anyhow::Result<()> {
+        match app_event {
+            AppEvent::Log(s) => self.messages.push(s),
+
+            AppEvent::Exit => self.exit(),
+
+            AppEvent::CommandMode => {
+                self.mode = AppMode::Command;
+                self.command_state.focus();
+            }
+            AppEvent::ExitMode => {
+                self.mode = AppMode::Default;
+                self.command_state = TextState::default();
+            }
+
+            AppEvent::Screen(screen) => {
+                self.screen = screen;
+            }
+
+            AppEvent::Model(model) => {
+                self.model = Some(*model);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn handle_command(&mut self, command: String) -> anyhow::Result<()> {
+        let parts = command.split_whitespace().collect::<Vec<_>>();
+
+        match parts[0] {
+            "q" => self.events.send(AppEvent::Exit),
+
+            "help" | "h" | "?" => {
+                app_send!(AppEvent::Screen(AppScreen::Help));
+            }
+
+            _ => {
+                anyhow::bail!("unknown command: {command}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Exit the app.
+    fn exit(&mut self) {
+        self.running = false;
+    }
+}
+
+struct AppEventHandler;
+
+impl musicopy::EventHandler for AppEventHandler {
+    fn on_update(&self, model: Model) {
+        app_send!(AppEvent::Model(Box::new(model)));
+    }
+}

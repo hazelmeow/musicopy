@@ -24,14 +24,20 @@ uniffi::setup_scaffolding!();
 /// State sent to Compose.
 #[derive(Debug, uniffi::Record)]
 pub struct Model {
-    node: NodeModel,
-    library: LibraryModel,
+    pub node: NodeModel,
+    pub library: LibraryModel,
 }
 
 /// Foreign trait implemented in Compose for receiving events from the Rust core.
 #[uniffi::export(with_foreign)]
 pub trait EventHandler: Send + Sync {
     fn on_update(&self, model: Model);
+}
+
+#[derive(Debug, uniffi::Record)]
+pub struct CoreOptions {
+    pub init_logging: bool,
+    pub in_memory: bool,
 }
 
 /// Long-lived object created by Compose as the entry point to the Rust core.
@@ -42,36 +48,49 @@ pub struct Core {
     library_tx: mpsc::UnboundedSender<LibraryCommand>,
 }
 
+// Stub debug implementation
+impl std::fmt::Debug for Core {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Core").finish()
+    }
+}
+
 #[uniffi::export]
 impl Core {
     #[uniffi::constructor]
-    pub fn new(event_handler: Arc<dyn EventHandler>) -> Result<Arc<Self>, CoreError> {
-        #[cfg(target_os = "android")]
-        {
-            android_logger::init_once(
-                android_logger::Config::default()
-                    .with_max_level(log::LevelFilter::Trace) // limit log level
-                    .with_tag("musicopy")
-                    .with_filter(
-                        android_logger::FilterBuilder::new()
-                            .parse("debug,iroh=warn")
-                            .build(),
-                    ),
-            );
+    pub fn new(
+        event_handler: Arc<dyn EventHandler>,
+        options: CoreOptions,
+    ) -> Result<Arc<Self>, CoreError> {
+        if options.init_logging {
+            #[cfg(target_os = "android")]
+            {
+                android_logger::init_once(
+                    android_logger::Config::default()
+                        .with_max_level(log::LevelFilter::Trace) // limit log level
+                        .with_tag("musicopy")
+                        .with_filter(
+                            android_logger::FilterBuilder::new()
+                                .parse("debug,iroh=warn")
+                                .build(),
+                        ),
+                );
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                env_logger::Builder::from_env(
+                    env_logger::Env::default().default_filter_or("debug,iroh=warn"),
+                )
+                .init();
+            }
+            log_panics::init();
         }
-        #[cfg(not(target_os = "android"))]
-        {
-            env_logger::Builder::from_env(
-                env_logger::Env::default().default_filter_or("debug,iroh=warn"),
-            )
-            .init();
-        }
-        log_panics::init();
 
         debug!("core: starting core");
 
         // TODO: pass arg for android dir
-        let (db, secret_key) = if cfg!(target_os = "android") {
+        let in_memory = cfg!(target_os = "android") || options.in_memory;
+        let (db, secret_key) = if in_memory {
             let db = Database::open_in_memory().context("failed to open database")?;
 
             let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -181,6 +200,20 @@ impl Core {
             node_tx,
             library_tx,
         }))
+    }
+
+    pub fn shutdown(&self) -> Result<(), CoreError> {
+        debug!("core: shutting down");
+
+        self.node_tx
+            .send(NodeCommand::Stop)
+            .context("failed to send stop command to node thread")?;
+
+        self.library_tx
+            .send(LibraryCommand::Stop)
+            .context("failed to send stop command to library thread")?;
+
+        Ok(())
     }
 
     pub async fn connect(&self, node_id: &str) -> Result<(), CoreError> {

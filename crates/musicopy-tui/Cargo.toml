@@ -1,0 +1,16 @@
+[package]
+name = "musicopy-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+musicopy = { path = "../musicopy" }
+
+anyhow = "1.0.98"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+env_filter = "0.1.3"
+futures = "0.3.31"
+log = "0.4.27"
+ratatui = "0.29.0"
+tokio = "1.45.1"
+tui-widgets = "0.4.1"

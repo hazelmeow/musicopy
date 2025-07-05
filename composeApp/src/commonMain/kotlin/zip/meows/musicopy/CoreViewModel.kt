@@ -4,11 +4,17 @@ import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import uniffi.musicopy.Core
+import uniffi.musicopy.CoreOptions
 import uniffi.musicopy.EventHandler
 import uniffi.musicopy.Model
 
 class CoreViewModel : ViewModel(), EventHandler {
-    private val _instance = Core(this)
+    private val _instance = Core(
+        this, CoreOptions(
+            initLogging = true,
+            inMemory = false,
+        )
+    )
     val instance: Core
         get() = _instance
 

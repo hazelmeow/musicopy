@@ -52,23 +52,23 @@ pub struct ClientModel {
 /// Node state sent to Compose.
 #[derive(Debug, uniffi::Record)]
 pub struct NodeModel {
-    node_id: String,
-    home_relay: String,
+    pub node_id: String,
+    pub home_relay: String,
 
-    send_ipv4: u64,
-    send_ipv6: u64,
-    send_relay: u64,
-    recv_ipv4: u64,
-    recv_ipv6: u64,
-    recv_relay: u64,
-    conn_success: u64,
-    conn_direct: u64,
+    pub send_ipv4: u64,
+    pub send_ipv6: u64,
+    pub send_relay: u64,
+    pub recv_ipv4: u64,
+    pub recv_ipv6: u64,
+    pub recv_relay: u64,
+    pub conn_success: u64,
+    pub conn_direct: u64,
 
-    active_servers: Vec<ServerModel>,
-    pending_servers: Vec<ServerModel>,
+    pub active_servers: Vec<ServerModel>,
+    pub pending_servers: Vec<ServerModel>,
 
-    active_clients: Vec<ClientModel>,
-    pending_clients: Vec<ClientModel>,
+    pub active_clients: Vec<ClientModel>,
+    pub pending_clients: Vec<ClientModel>,
 }
 
 #[derive(Debug)]
