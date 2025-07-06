@@ -7,7 +7,7 @@ actual class DirectoryPicker {
         this.activity = platformContext.mainActivity
     }
 
-    actual fun pickDownloadDirectory() {
+    actual suspend fun pickDownloadDirectory() {
         activity.observer.openDocumentTree.launch(null)
     }
 }

@@ -105,7 +105,9 @@ fun App(
                         HomeScreen(
                             model = it,
                             onPickDownloadDirectory = {
+                                scope.launch {
                                 directoryPicker.pickDownloadDirectory()
+                                }
                             },
                             onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
                             onConnectManuallyButtonClicked = {
