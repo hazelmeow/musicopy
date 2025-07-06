@@ -92,12 +92,12 @@ impl Database {
     }
 
     pub fn get_roots_by_node_id(&self, node_id: NodeId) -> anyhow::Result<Vec<Root>> {
-        let node_id = node_id_to_string(&node_id);
         let mut stmt = self
             .conn
             .prepare("SELECT id, node_id, name, path FROM roots WHERE node_id = ?")
             .expect("should prepare statement");
 
+        let node_id = node_id_to_string(&node_id);
         stmt.query_and_then([node_id], |row| {
             let node_id =
                 hex::decode(row.get::<_, String>(1)?).context("failed to parse node id")?;
@@ -116,12 +116,12 @@ impl Database {
     }
 
     pub fn count_files_by_root(&self, node_id: NodeId, root: &str) -> anyhow::Result<u64> {
-        let node_id = node_id_to_string(&node_id);
         let mut stmt = self
             .conn
             .prepare("SELECT COUNT(*) FROM files WHERE node_id = ? AND root = ?")
             .expect("should prepare statement");
 
+        let node_id = node_id_to_string(&node_id);
         let count: u64 = stmt
             .query_row([&node_id, root], |row| row.get(0))
             .context("failed to count files")?;
@@ -181,6 +181,39 @@ impl Database {
         })
         .expect("should bind parameters")
         .collect()
+    }
+
+    pub fn get_file_by_node_root_path(
+        &self,
+        node_id: NodeId,
+        root: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<File>> {
+        let mut stmt = self
+        .conn
+        .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE node_id = ? AND root = ? AND path = ?")
+        .expect("should prepare statement");
+
+        let node_id = node_id_to_string(&node_id);
+        stmt.query_and_then([&node_id, root, path], |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(3)?).context("failed to parse node id")?;
+            let node_id =
+                NodeId::try_from(node_id.as_slice()).context("failed to parse node id")?;
+
+            Ok(File {
+                id: row.get(0)?,
+                hash_kind: row.get(1)?,
+                hash: row.get(2)?,
+                node_id,
+                root: row.get(4)?,
+                path: row.get(5)?,
+                local_path: row.get(6)?,
+            })
+        })
+        .expect("should bind parameters")
+        .next()
+        .transpose()
     }
 }
 

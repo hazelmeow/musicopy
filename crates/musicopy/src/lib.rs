@@ -236,6 +236,19 @@ impl Core {
             .map_err(CoreError::from)
     }
 
+    pub fn download_all(&self, node_id: &str, download_directory: &str) -> Result<(), CoreError> {
+        let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
+
+        self.node_tx
+            .send(NodeCommand::DownloadAll {
+                client: node_id,
+                download_directory: download_directory.into(),
+            })
+            .context("failed to send to node thread")?;
+
+        Ok(())
+    }
+
     pub fn accept_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 

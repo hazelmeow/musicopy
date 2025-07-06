@@ -9,6 +9,7 @@
 //! Servers send files, primarily used in the desktop app.
 
 use crate::database::Database;
+use anyhow::Context;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
     Endpoint, NodeAddr, NodeId, SecretKey,
@@ -20,10 +21,14 @@ use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex, atomic::AtomicBool},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::{mpsc, oneshot},
+};
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -35,8 +40,19 @@ pub struct ServerModel {
     pub name: String,
     pub node_id: String,
     pub connected_at: u64,
+
     pub connection_type: String,
     pub latency_ms: Option<u64>,
+}
+
+/// Model of an item in the index sent by the server.
+#[derive(Debug, uniffi::Record)]
+pub struct IndexItemModel {
+    pub node_id: String,
+    pub hash_kind: String,
+    pub hash: String,
+    pub root: String,
+    pub path: String,
 }
 
 /// Model of an outgoing connection.
@@ -45,8 +61,11 @@ pub struct ClientModel {
     pub name: String,
     pub node_id: String,
     pub connected_at: u64,
+
     pub connection_type: String,
     pub latency_ms: Option<u64>,
+
+    pub index: Option<Vec<IndexItemModel>>,
 }
 
 /// Node state sent to Compose.
@@ -81,6 +100,11 @@ pub enum NodeCommand {
     AcceptConnection(NodeId),
     DenyConnection(NodeId),
 
+    DownloadAll {
+        client: NodeId,
+        download_directory: PathBuf,
+    },
+
     Stop,
 }
 
@@ -99,6 +123,7 @@ pub struct Node {
 #[derive(Debug)]
 pub struct NodeRunToken {
     server_handle_rx: mpsc::UnboundedReceiver<(NodeId, ServerHandle)>,
+    server_closed_rx: mpsc::UnboundedReceiver<NodeId>,
     client_handle_rx: mpsc::UnboundedReceiver<(NodeId, ClientHandle)>,
 }
 
@@ -108,6 +133,7 @@ impl Node {
         db: Arc<Mutex<Database>>,
     ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
         let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
+        let (server_closed_tx, server_closed_rx) = mpsc::unbounded_channel();
         let (client_handle_tx, client_handle_rx) = mpsc::unbounded_channel();
 
         let endpoint = Endpoint::builder()
@@ -115,7 +141,7 @@ impl Node {
             .discovery_n0()
             .bind()
             .await?;
-        let protocol = Protocol::new(db.clone(), server_handle_tx);
+        let protocol = Protocol::new(db.clone(), server_handle_tx, server_closed_tx);
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
@@ -134,6 +160,7 @@ impl Node {
 
         let node_run = NodeRunToken {
             server_handle_rx,
+            server_closed_rx,
             client_handle_rx,
         };
 
@@ -147,6 +174,7 @@ impl Node {
     ) -> anyhow::Result<()> {
         let NodeRunToken {
             mut server_handle_rx,
+            mut server_closed_rx,
             mut client_handle_rx,
         } = run_token;
 
@@ -169,7 +197,7 @@ impl Node {
                         NodeCommand::AcceptConnection(node_id) => {
                             let servers = self.servers.lock().unwrap();
                             if let Some(server_handle) = servers.get(&node_id) {
-                                server_handle.tx.send(ServerCommand::Accept).expect("failed to send accept command");
+                                server_handle.tx.send(ServerCommand::Accept).expect("failed to send ServerCommand::Accept");
                             } else {
                                 log::error!("AcceptConnection: no server found with node_id: {node_id}");
                             }
@@ -177,9 +205,18 @@ impl Node {
                         NodeCommand::DenyConnection(node_id) => {
                             let servers = self.servers.lock().unwrap();
                             if let Some(server_handle) = servers.get(&node_id) {
-                                server_handle.tx.send(ServerCommand::Close).expect("failed to send close command");
+                                server_handle.tx.send(ServerCommand::Close).expect("failed to send ServerCommand::Close");
                             } else {
                                 log::error!("DenyConnection: no server found with node_id: {node_id}");
+                            }
+                        },
+
+                        NodeCommand::DownloadAll { client, download_directory } => {
+                            let clients = self.clients.lock().unwrap();
+                            if let Some(client_handle) = clients.get(&client) {
+                                client_handle.tx.send(ClientCommand::DownloadAll { download_directory }).expect("failed to send ClientCommand::DownloadAll");
+                            } else {
+                                log::error!("DownloadAll: no client found with node_id: {client}");
                             }
                         },
 
@@ -192,12 +229,21 @@ impl Node {
                     servers.insert(server_id, server_handle);
                 }
 
+                Some(server_id) = server_closed_rx.recv() => {
+                    let mut servers = self.servers.lock().unwrap();
+                    servers.remove(&server_id);
+                }
+
                 Some((client_id, client_handle)) = client_handle_rx.recv() => {
                     let mut clients = self.clients.lock().unwrap();
                     clients.insert(client_id, client_handle);
                 }
+
+                else => {
+                    log::warn!("all senders dropped in Node::run, shutting down");
+                    break
+                }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         let _ = self.router.shutdown().await;
@@ -213,14 +259,19 @@ impl Node {
         log::info!("opened connection to {node_id}");
 
         let client_handle_tx = self.client_handle_tx.clone();
+        let node = self.clone();
         tokio::spawn(async move {
             let client = Client::new(connection, client_handle_tx);
 
             if let Err(e) = client.run().await {
-                log::error!("error during client.run(): {e}");
+                log::error!("error during client.run(): {e:#}");
             }
 
-            // TODO: remove handle from hashmap
+            // remove handle from hashmap
+            {
+                let mut clients = node.clients.lock().unwrap();
+                clients.remove(&node_id);
+            }
         });
 
         Ok(())
@@ -291,12 +342,33 @@ impl Node {
                         .and_then(|info| info.latency)
                         .map(|latency| latency.as_millis() as u64);
 
+                    let index = if accepted {
+                        let index = client_handle.index.lock().unwrap();
+                        index.as_ref().map(|index| {
+                            index
+                                .iter()
+                                .map(|item| IndexItemModel {
+                                    node_id: node_id.to_string(),
+                                    hash_kind: item.hash_kind.clone(),
+                                    hash: item.hash.clone(),
+                                    root: item.root.clone(),
+                                    path: item.path.clone(),
+                                })
+                                .collect()
+                        })
+                    } else {
+                        None
+                    };
+
                     let model = ClientModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
                         connected_at: client_handle.connected_at,
+
                         connection_type,
                         latency_ms,
+
+                        index,
                     };
 
                     if accepted { Ok(model) } else { Err(model) }
@@ -333,6 +405,7 @@ impl Node {
 struct Protocol {
     db: Arc<Mutex<Database>>,
     server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+    server_closed_tx: mpsc::UnboundedSender<NodeId>,
 }
 
 impl Protocol {
@@ -341,10 +414,12 @@ impl Protocol {
     fn new(
         db: Arc<Mutex<Database>>,
         server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+        server_closed_tx: mpsc::UnboundedSender<NodeId>,
     ) -> Self {
         Self {
             db,
             server_handle_tx,
+            server_closed_tx,
         }
     }
 }
@@ -353,6 +428,7 @@ impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
         let server_handle_tx = self.server_handle_tx.clone();
+        let server_closed_tx = self.server_closed_tx.clone();
         Box::pin(async move {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
@@ -360,12 +436,17 @@ impl ProtocolHandler for Protocol {
             let server = Server::new(db, connection, server_handle_tx);
             server.run().await?;
 
+            // remove handle from hashmap
+            server_closed_tx
+                .send(node_id)
+                .expect("failed to send server closed notification");
+
             Ok(())
         })
     }
 }
 
-/// A message sent by the client end of a connection.
+/// A message sent by the client end of a connection on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ClientMessage {
     Identify(String),
@@ -373,18 +454,27 @@ enum ClientMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexItem {
+    node_id: NodeId,
     hash_kind: String,
     hash: String,
     root: String,
     path: String,
 }
 
-/// A message sent by the server end of a connection.
+/// A message sent by the server end of a connection on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ServerMessage {
     Identify(String),
     Accepted,
     Index(Vec<IndexItem>),
+}
+
+/// A message sent by the client at the start of a file transfer stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadRequest {
+    node_id: NodeId,
+    root: String,
+    path: String,
 }
 
 #[derive(Debug)]
@@ -396,16 +486,20 @@ enum ServerCommand {
 
 #[derive(Debug, Clone)]
 struct ServerHandle {
-    connected_at: u64,
-    accepted: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<ServerCommand>,
+
+    connected_at: u64,
+
+    accepted: Arc<AtomicBool>,
 }
 
 struct Server {
     db: Arc<Mutex<Database>>,
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+
     connected_at: u64,
+
     accepted: Arc<AtomicBool>,
 }
 
@@ -419,10 +513,12 @@ impl Server {
             db,
             connection,
             handle_tx,
+
             connected_at: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+
             accepted: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -479,9 +575,11 @@ impl Server {
             .send((
                 remote_node_id,
                 ServerHandle {
-                    connected_at: self.connected_at,
-                    accepted: self.accepted.clone(),
                     tx: tx.clone(),
+
+                    connected_at: self.connected_at,
+
+                    accepted: self.accepted.clone(),
                 },
             ))
             .expect("failed to send server handle");
@@ -502,8 +600,23 @@ impl Server {
                     }
                 }
 
-                Some(Ok(message)) = recv.next() => {
-                    log::debug!("unexpected message (waiting  for Accepted): {message:?}");
+                next_message = recv.next() => {
+                    match next_message {
+                        Some(Ok(message)) => {
+                            log::debug!("unexpected message (not accepted): {message:?}");
+                        },
+                        Some(Err(e)) => {
+                            log::error!("error receiving message: {e}");
+                        },
+                        None => {
+                            log::info!("control stream closed, shutting down server");
+                            return Ok(());
+                        },
+                    }
+                }
+
+                else => {
+                    anyhow::bail!("stream and receiver closed while waiting for Accept");
                 }
             }
         }
@@ -539,11 +652,70 @@ impl Server {
                     }
                 }
 
-                Some(Ok(message)) = recv.next() => {
-                    log::debug!("accepted message: {message:?}");
+                next_message = recv.next() => {
+                    match next_message {
+                        Some(Ok(message)) => {
+                            log::info!("accepted message: {message:?}");
+                        },
+                        Some(Err(e)) => {
+                            log::error!("error receiving message: {e}");
+                        },
+                        None => {
+                            log::info!("control stream closed, shutting down server");
+                            break;
+                        },
+                    }
                 }
 
-                // TODO: accept new bidi streams for file transfers
+                // handle file transfer streams
+                accept_result = self.connection.accept_bi() => {
+                    match accept_result {
+                        Ok((mut send, mut recv)) => {
+                            // receive download request
+                            let download_req_len = recv.read_u32().await?;
+                            let mut download_req_buf = vec![0; download_req_len as usize];
+                            recv
+                                .read_exact(&mut download_req_buf)
+                                .await
+                                .context("failed to read download request")?;
+                            let download_req: DownloadRequest =
+                                postcard::from_bytes(&download_req_buf).context("failed to deserialize download request")?;
+
+                            log::info!("received download request for {}/{}", download_req.root, download_req.path);
+
+                            // query database for file
+                            let file = {
+                                let db = self.db.lock().unwrap();
+                                db.get_file_by_node_root_path(
+                                    download_req.node_id,
+                                    &download_req.root,
+                                    &download_req.path,
+                                )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
+                            };
+
+                            // send file content
+                            let file_path = PathBuf::from(&file.local_path);
+                            if file_path.exists() {
+                                let file_content = tokio::fs::read(file_path).await?;
+                                send.write_u32(file_content.len() as u32).await?;
+                                send.write_all(&file_content).await?;
+                            } else {
+                                anyhow::bail!("file at local_path does not exist: {}", file.local_path);
+                            }
+
+                            log::info!("finished sending file content for {}/{}", download_req.root, download_req.path);
+                        }
+
+                        Err(e) => {
+                            log::error!("accept_bi error: {e}");
+                        }
+                    }
+                }
+
+                else => {
+                    log::warn!("all senders dropped in Server::run, shutting down");
+                    break;
+                }
             }
         }
 
@@ -558,6 +730,7 @@ impl Server {
         Ok(files
             .into_iter()
             .map(|file| IndexItem {
+                node_id: file.node_id,
                 hash_kind: file.hash_kind,
                 hash: file.hash,
                 root: file.root,
@@ -570,20 +743,28 @@ impl Server {
 #[derive(Debug)]
 enum ClientCommand {
     Close,
+
+    DownloadAll { download_directory: PathBuf },
 }
 
 #[derive(Debug, Clone)]
 struct ClientHandle {
-    connected_at: u64,
-    accepted: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<ClientCommand>,
+
+    connected_at: u64,
+
+    accepted: Arc<AtomicBool>,
+    index: Arc<Mutex<Option<Vec<IndexItem>>>>,
 }
 
 struct Client {
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+
     connected_at: u64,
+
     accepted: Arc<AtomicBool>,
+    index: Arc<Mutex<Option<Vec<IndexItem>>>>,
 }
 
 impl Client {
@@ -594,11 +775,14 @@ impl Client {
         Self {
             connection,
             handle_tx,
+
             connected_at: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+
             accepted: Arc::new(AtomicBool::new(false)),
+            index: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -655,9 +839,12 @@ impl Client {
             .send((
                 remote_node_id,
                 ClientHandle {
-                    connected_at: self.connected_at,
-                    accepted: self.accepted.clone(),
                     tx,
+
+                    connected_at: self.connected_at,
+
+                    accepted: self.accepted.clone(),
+                    index: self.index.clone(),
                 },
             ))
             .expect("failed to send server handle");
@@ -670,21 +857,39 @@ impl Client {
                         ClientCommand::Close => {
                             return Ok(());
                         }
+
+                        ClientCommand::DownloadAll {.. } => {
+                            log::warn!("unexpected DownloadAll command in waiting loop");
+                        }
                     }
                 }
 
-                Some(Ok(message)) = recv.next() => {
-                    match message {
-                        ServerMessage::Accepted => {
-                            log::info!("server accepted the connection");
+                next_message = recv.next() => {
+                    match next_message {
+                        Some(Ok(message)) => {
+                            match message {
+                                ServerMessage::Accepted => {
+                                    log::info!("server accepted the connection");
 
-                            // continue to next state
-                            break;
+                                    // continue to next state
+                                    break;
+                                }
+                                _ => {
+                                    log::debug!("unexpected message (waiting for Accepted): {message:?}");
+                                }
+                            }
                         }
-                        _ => {
-                            log::debug!("unexpected message (waiting for Accepted): {message:?}");
+                        Some(Err(e)) => {
+                            log::error!("error receiving message: {e}");
+                        }
+                        None => {
+                            anyhow::bail!("control stream closed, shutting down client");
                         }
                     }
+                }
+
+                else => {
+                    anyhow::bail!("stream and receiver closed while waiting for Accepted");
                 }
             }
         }
@@ -702,26 +907,106 @@ impl Client {
                             self.connection.close(0u32.into(), b"close");
                             break;
                         }
+
+                        ClientCommand::DownloadAll { download_directory } => {
+                            log::info!("received DownloadAll command, downloading to {download_directory:?}");
+
+                            let index = {
+                                let index = self.index.lock().unwrap();
+                                index.clone()
+                            };
+                            let Some(index) = index else {
+                                log::error!("DownloadAll: no index available, cannot download");
+                                continue;
+                            };
+
+                            // TODO: concurrent
+                            for file in index {
+                                log::debug!("downloading file: {}/{}", file.root, file.path);
+
+                                // open a bidirectional stream to send DownloadRequest
+                                let (mut send, mut recv) = self.connection.open_bi().await?;
+                                let download_request = DownloadRequest {
+                                    node_id: file.node_id,
+                                    root: file.root.clone(),
+                                    path: file.path.clone()
+                                };
+                                let download_request_buf = postcard::to_stdvec(&download_request)
+                                    .context("failed to serialize download request")?;
+                                send.write_u32(download_request_buf.len() as u32)
+                                    .await
+                                    .context("failed to write download request length")?;
+                                send.write_all(&download_request_buf)
+                                    .await
+                                    .context("failed to write download request")?;
+
+                                log::debug!("sent download request");
+
+                                // receive file content instead of buffering in memory
+                                // TODO: stream to file
+                                let file_content_len = recv.read_u32().await?;
+                                let mut file_content_buf = vec![0; file_content_len as usize];
+                                recv.read_exact(&mut file_content_buf)
+                                    .await
+                                    .context("failed to read file content")?;
+
+                                let root_dir_name = format!("musicopy-{}-{}", file.node_id, file.root);
+
+                                // TODO: need special handling on Android
+
+                                let file_path = download_directory.join(root_dir_name).join(&file.path);
+                                if let Some(parent) = file_path.parent() {
+                                    tokio::fs::create_dir_all(parent)
+                                        .await
+                                        .context("failed to create parent directory")?;
+                                }
+
+                                tokio::fs::write(&file_path, file_content_buf)
+                                    .await
+                                    .context("failed to write file content")?;
+
+                                log::debug!("saved file to {}", file_path.display());
+                            }
+                        }
                     }
                 }
 
-                Some(Ok(message)) = recv.next() => {
-                    log::debug!("received message: {message:?}");
+                next_message = recv.next() => {
+                    match next_message {
+                        Some(Ok(message)) => {
+                            log::debug!("received message: {message:?}");
 
-                    match message {
-                        ServerMessage::Index(index) => {
-                            log::info!("received index with {} items", index.len());
-                            // TOOD: do something
+                            match message {
+                                ServerMessage::Index(new_index) => {
+                                    log::info!("received index with {} items", new_index.len());
+                                    {
+                                        let mut index = self.index.lock().unwrap();
+                                        *index = Some(new_index);
+                                    }
+                                }
+
+                                _ => {
+                                    log::debug!("unexpected message in main loop: {message:?}");
+                                }
+                            }
                         }
-
-                        _ => {
-                            log::debug!("unexpected message in main loop: {message:?}");
+                        Some(Err(e)) => {
+                            log::error!("error receiving message: {e}");
+                        }
+                        None => {
+                            log::info!("control stream closed, shutting down client");
+                            break;
                         }
                     }
                 }
 
                 _ = self.connection.closed() => {
                     log::info!("connection closed");
+                    break;
+                }
+
+                else => {
+                    log::warn!("all senders dropped in Client::run, shutting down");
                     break;
                 }
             }

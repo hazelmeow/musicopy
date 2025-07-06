@@ -3,7 +3,7 @@ use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -47,44 +47,49 @@ impl Library {
         loop {
             tokio::select! {
                 Some(command) = rx.recv() => {
-                        match command {
-                            LibraryCommand::AddRoot { name, path } => {
-                                {
-                                    let db = self.db.lock().unwrap();
-                                    let path = PathBuf::from(path);
-                                    let path = path.canonicalize().context("failed to canonicalize path")?;
-                                    db.add_root(self.local_node_id, &name, &path.to_string_lossy()).context("failed to add root")?;
-                                }
-
-                                // TODO
-                                // self.notify_state();
-
-                                // rescan the library after adding roots
-                                self.spawn_scan();
-                            }
-                            LibraryCommand::RemoveRoot { name } => {
-                                {
-                                    let db = self.db.lock().unwrap();
-                                    db.delete_root_by_name(self.local_node_id, &name).context("failed to delete root")?;
-                                }
-
-                                // TODO: remove files from root
-
-                                // TODO
-                                // self.notify_state();
-
-                                // rescan the library after adding roots
-                                self.spawn_scan();
-                            }
-                            LibraryCommand::Rescan => {
-                                self.spawn_scan();
+                    match command {
+                        LibraryCommand::AddRoot { name, path } => {
+                            {
+                                let db = self.db.lock().unwrap();
+                                let path = PathBuf::from(path);
+                                let path = path.canonicalize().context("failed to canonicalize path")?;
+                                db.add_root(self.local_node_id, &name, &path.to_string_lossy()).context("failed to add root")?;
                             }
 
-                            LibraryCommand::Stop => {
-                                break;
+                            // TODO
+                            // self.notify_state();
+
+                            // rescan the library after adding roots
+                            self.spawn_scan();
+                        }
+                        LibraryCommand::RemoveRoot { name } => {
+                            {
+                                let db = self.db.lock().unwrap();
+                                db.delete_root_by_name(self.local_node_id, &name).context("failed to delete root")?;
                             }
+
+                            // TODO: remove files from root
+
+                            // TODO
+                            // self.notify_state();
+
+                            // rescan the library after adding roots
+                            self.spawn_scan();
+                        }
+                        LibraryCommand::Rescan => {
+                            self.spawn_scan();
+                        }
+
+                        LibraryCommand::Stop => {
+                            break;
                         }
                     }
+                }
+
+                else => {
+                    log::warn!("all senders dropped in Library::run, shutting down");
+                    break;
+                }
             }
         }
 
@@ -209,8 +214,8 @@ impl Library {
                 hash: "",
                 node_id: self.local_node_id,
                 root: &item.root,
-                path: &item.path, //TODO
-                local_path: &item.path,
+                path: &item.path,
+                local_path: &item.local_path,
             }))?;
         }
 

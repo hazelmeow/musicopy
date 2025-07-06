@@ -37,7 +37,7 @@ fun SectionCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp, 16.dp),
+            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(title, style = MaterialTheme.typography.titleLarge)

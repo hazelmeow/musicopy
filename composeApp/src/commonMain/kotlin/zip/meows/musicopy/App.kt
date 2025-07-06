@@ -106,7 +106,7 @@ fun App(
                             model = it,
                             onPickDownloadDirectory = {
                                 scope.launch {
-                                directoryPicker.pickDownloadDirectory()
+                                    directoryPicker.pickDownloadDirectory()
                                 }
                             },
                             onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
@@ -168,9 +168,21 @@ fun App(
                     model?.let { model ->
                         val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
 
+                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                            null
+                        )
+
                         activeClient?.let { clientModel ->
                             PreTransferScreen(
                                 clientModel = clientModel,
+                                onDownloadAll = {
+                                    downloadDirectory?.let { downloadDirectory ->
+                                        viewModel.instance.downloadAll(nodeId, downloadDirectory)
+                                    } ?: run {
+                                        // TODO toast?
+                                        println("download directory is null")
+                                    }
+                                },
                                 onCancel = {
                                     navController.popBackStack(Home, inclusive = false)
                                 }
