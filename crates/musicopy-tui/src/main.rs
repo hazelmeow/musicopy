@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     // set up global logger
     let logger = AppLogger::new();
     log::set_boxed_logger(Box::new(logger))?;
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Debug);
 
     // run tui
     let terminal = ratatui::init();

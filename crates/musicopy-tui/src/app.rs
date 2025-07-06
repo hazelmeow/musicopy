@@ -192,8 +192,22 @@ impl<'a> App<'a> {
     pub fn handle_command(&mut self, command: String) -> anyhow::Result<()> {
         let parts = command.split_whitespace().collect::<Vec<_>>();
 
+        if parts.is_empty() {
+            return Ok(());
+        }
+
         match parts[0] {
             "q" => self.events.send(AppEvent::Exit),
+
+            "addlibrary" => {
+                if parts.len() < 3 {
+                    anyhow::bail!("usage: addlibrary <name> <path>");
+                }
+
+                let name = parts[1].to_string();
+                let path = parts[2].to_string();
+                self.core.add_library_root(name, path)?;
+            }
 
             "accept" => {
                 app_log!("accepting pending servers");

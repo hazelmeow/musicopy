@@ -186,7 +186,7 @@ impl<'a> App<'a> {
         if model.library.local_roots.is_empty() {
             lines.push(Line::from(vec![
                 "Empty, add a path using ".into(),
-                ":addlibrary <path>".blue(),
+                ":addlibrary <name> <path>".blue(),
             ]));
         }
 
