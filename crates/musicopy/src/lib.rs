@@ -292,3 +292,21 @@ impl Core {
         Ok(())
     }
 }
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_zip_meows_musicopy_RustNdkContext_init(
+    env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    context: jni::objects::JObject,
+) {
+    let java_vm = env.get_java_vm().expect("failed to get java vm");
+    let java_vm_ptr = java_vm.get_java_vm_pointer() as *mut std::ffi::c_void;
+
+    let context_ptr = context.into_raw() as *mut std::ffi::c_void;
+
+    unsafe {
+        ndk_context::initialize_android_context(java_vm_ptr, context_ptr);
+    }
+}
