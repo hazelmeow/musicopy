@@ -111,6 +111,7 @@ pub enum NodeCommand {
 #[derive(Debug)]
 pub struct Node {
     db: Arc<Mutex<Database>>,
+
     router: Router,
     protocol: Protocol,
 
@@ -149,6 +150,7 @@ impl Node {
 
         let node = Arc::new(Self {
             db,
+
             router,
             protocol,
 
@@ -261,7 +263,7 @@ impl Node {
         let client_handle_tx = self.client_handle_tx.clone();
         let node = self.clone();
         tokio::spawn(async move {
-            let client = Client::new(connection, client_handle_tx);
+            let client = Client::new(client_handle_tx, connection);
 
             if let Err(e) = client.run().await {
                 log::error!("error during client.run(): {e:#}");
@@ -758,8 +760,8 @@ struct ClientHandle {
 }
 
 struct Client {
-    connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+    connection: Connection,
 
     connected_at: u64,
 
@@ -769,12 +771,12 @@ struct Client {
 
 impl Client {
     fn new(
-        connection: Connection,
         handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+        connection: Connection,
     ) -> Self {
         Self {
-            connection,
             handle_tx,
+            connection,
 
             connected_at: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
