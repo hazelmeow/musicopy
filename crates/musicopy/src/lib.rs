@@ -304,7 +304,14 @@ pub extern "system" fn Java_zip_meows_musicopy_RustNdkContext_init(
     let java_vm = env.get_java_vm().expect("failed to get java vm");
     let java_vm_ptr = java_vm.get_java_vm_pointer() as *mut std::ffi::c_void;
 
-    let context_ptr = context.into_raw() as *mut std::ffi::c_void;
+    // turn the local context reference into a global reference
+    let context = env
+        .new_global_ref(context)
+        .expect("failed to create global ref for context");
+    let context_ptr = context.as_raw() as *mut std::ffi::c_void;
+
+    // leak the context global reference so it stays alive forever
+    Box::leak(Box::new(context));
 
     unsafe {
         ndk_context::initialize_android_context(java_vm_ptr, context_ptr);
