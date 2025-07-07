@@ -11,3 +11,5 @@ actual class PlatformContext actual constructor() {
 
 @OptIn(ExperimentalComposeUiApi::class)
 actual fun toClipEntry(string: String): ClipEntry = ClipEntry.withPlainText(string)
+
+actual object CoreProvider : ICoreProvider

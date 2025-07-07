@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -30,19 +31,23 @@ import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
 import zip.meows.musicopy.ui.screens.ConnectQR
 import zip.meows.musicopy.ui.screens.ConnectQRScreen
 import zip.meows.musicopy.ui.screens.Home
-import zip.meows.musicopy.ui.screens.WaitingScreen
 import zip.meows.musicopy.ui.screens.HomeScreen
 import zip.meows.musicopy.ui.screens.PreTransfer
 import zip.meows.musicopy.ui.screens.PreTransferScreen
 import zip.meows.musicopy.ui.screens.Transfer
 import zip.meows.musicopy.ui.screens.Waiting
+import zip.meows.musicopy.ui.screens.WaitingScreen
 
 @Composable
 fun App(
     platformContext: PlatformContext,
-    viewModel: CoreViewModel = viewModel(),
     navController: NavHostController = rememberNavController(),
 ) {
+    val extras = MutableCreationExtras().apply {
+        set(CoreViewModel.PLATFORM_CONTEXT_KEY, platformContext)
+    }
+    val viewModel: CoreViewModel = viewModel(factory = CoreViewModel.Factory, extras = extras)
+
     val model by viewModel.state.collectAsState()
 
     val directoryPicker = remember { DirectoryPicker(platformContext) }

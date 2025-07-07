@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import zip.meows.musicopy.CoreViewModel
 import zip.meows.musicopy.PlatformContext
@@ -11,8 +12,12 @@ import zip.meows.musicopy.PlatformContext
 @Composable
 fun DesktopApp(
     platformContext: PlatformContext,
-    viewModel: CoreViewModel = viewModel(),
 ) {
+    val extras = MutableCreationExtras().apply {
+        set(CoreViewModel.PLATFORM_CONTEXT_KEY, platformContext)
+    }
+    val viewModel: CoreViewModel = viewModel(factory = CoreViewModel.Factory, extras = extras)
+    
     val model by viewModel.state.collectAsState()
 
     MaterialTheme {

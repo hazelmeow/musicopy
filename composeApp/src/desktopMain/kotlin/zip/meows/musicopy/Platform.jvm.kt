@@ -16,3 +16,5 @@ actual class PlatformContext private actual constructor() {
 }
 
 actual fun toClipEntry(string: String): ClipEntry = ClipEntry(StringSelection(string))
+
+actual object CoreProvider : ICoreProvider

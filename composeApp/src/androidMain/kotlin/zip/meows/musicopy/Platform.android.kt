@@ -18,3 +18,5 @@ actual class PlatformContext private actual constructor() {
 
 actual fun toClipEntry(string: String): ClipEntry =
     ClipData.newPlainText("label", string).toClipEntry()
+
+actual object CoreProvider : ICoreProvider
