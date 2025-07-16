@@ -1,6 +1,7 @@
 pub mod database;
 pub mod error;
 pub mod file_dialog;
+pub mod fs;
 pub mod library;
 pub mod node;
 
