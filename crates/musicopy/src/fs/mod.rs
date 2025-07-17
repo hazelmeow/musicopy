@@ -12,10 +12,14 @@
 //!       in a deep subfolder instead of its path to not have to resolve it again.
 //! - Will add support for iOS/MacOS sandboxing ("bookmarks"?) later
 
-use std::{io::Write, path::PathBuf};
-
 #[cfg(target_os = "android")]
 mod android;
+
+use std::{path::PathBuf, pin::Pin};
+use tokio::{
+    fs::{File as TokioFile, OpenOptions},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+};
 
 pub enum OpenMode {
     Read,
@@ -87,18 +91,18 @@ impl TreePath {
 
 pub struct TreeFile {
     #[cfg(not(target_os = "android"))]
-    file: std::fs::File,
+    file: TokioFile,
 
     #[cfg(target_os = "android")]
     file: android::FileHandle,
 }
 
 impl TreeFile {
-    pub fn create(path: &TreePath) -> anyhow::Result<Self> {
+    pub async fn create(path: &TreePath) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
             let resolved_path = path.resolve_path();
-            let file = std::fs::File::create(&resolved_path)?;
+            let file = TokioFile::create(&resolved_path).await?;
             Ok(Self { file })
         }
         #[cfg(target_os = "android")]
@@ -109,18 +113,19 @@ impl TreeFile {
         }
     }
 
-    pub fn open(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
+    pub async fn open(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
             let resolved_path = path.resolve_path();
             let file = match mode {
-                OpenMode::Read => std::fs::OpenOptions::new()
-                    .read(true)
-                    .open(&resolved_path)?,
-                OpenMode::Write => std::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(&resolved_path)?,
+                OpenMode::Read => OpenOptions::new().read(true).open(&resolved_path).await?,
+                OpenMode::Write => {
+                    OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&resolved_path)
+                        .await?
+                }
             };
             Ok(Self { file })
         }
@@ -131,21 +136,27 @@ impl TreeFile {
         }
     }
 
-    pub fn open_or_create(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
+    pub async fn open_or_create(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
             let resolved_path = path.resolve_path();
             let file = match mode {
-                OpenMode::Read => std::fs::OpenOptions::new()
-                    .read(true)
-                    .truncate(false)
-                    .create(true)
-                    .open(&resolved_path)?,
-                OpenMode::Write => std::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .create(true)
-                    .open(&resolved_path)?,
+                OpenMode::Read => {
+                    OpenOptions::new()
+                        .read(true)
+                        .truncate(false)
+                        .create(true)
+                        .open(&resolved_path)
+                        .await?
+                }
+                OpenMode::Write => {
+                    OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .create(true)
+                        .open(&resolved_path)
+                        .await?
+                }
             };
             Ok(Self { file })
         }
@@ -156,7 +167,7 @@ impl TreeFile {
         }
     }
 
-    fn file(&self) -> &std::fs::File {
+    fn file(&self) -> &TokioFile {
         #[cfg(not(target_os = "android"))]
         {
             &self.file
@@ -167,17 +178,74 @@ impl TreeFile {
         }
     }
 
-    pub fn write_all(&mut self, buf: &[u8]) -> anyhow::Result<()> {
-        self.file().write_all(buf)?;
+    fn file_mut(&mut self) -> &mut TokioFile {
+        #[cfg(not(target_os = "android"))]
+        {
+            &mut self.file
+        }
+        #[cfg(target_os = "android")]
+        {
+            self.file.file_mut()
+        }
+    }
+
+    pub async fn write_all(&mut self, buf: &[u8]) -> anyhow::Result<()> {
+        self.file_mut().write_all(buf).await?;
         Ok(())
     }
 }
 
-pub fn create_dir_all(path: &TreePath) -> anyhow::Result<()> {
+impl AsyncRead for TreeFile {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(self.file_mut()).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TreeFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        Pin::new(self.file_mut()).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(self.file_mut()).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(self.file_mut()).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        Pin::new(self.file_mut()).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.file().is_write_vectored()
+    }
+}
+
+pub async fn create_dir_all(path: &TreePath) -> anyhow::Result<()> {
     #[cfg(not(target_os = "android"))]
     {
         let resolved_path = path.resolve_path();
-        std::fs::create_dir_all(&resolved_path)?;
+        tokio::fs::create_dir_all(&resolved_path).await?;
         Ok(())
     }
     #[cfg(target_os = "android")]

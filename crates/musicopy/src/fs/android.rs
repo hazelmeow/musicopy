@@ -8,8 +8,8 @@
 //! - Otherwise open file with write+truncate
 //! - Provide std Write
 //!
-//! To do operations on files, we can open a document URI as a ParcelFileDescriptor and then
-//! wrap it in a std File and use that. We don't run Drop for the std File since we're only using
+//! To do operations on files, we can open a document URI as a ParcelFileDescriptor and then wrap
+//! it in a std or tokio File and use that. We don't run Drop for the File since we're only using
 //! it to wrap the file descriptor, which we manually close using the ParcelFileDescriptor via JNI.
 
 use crate::fs::{OpenMode, TreePath};
@@ -20,9 +20,8 @@ use jni::{
     strings::JNIString,
     sys::{jint, jsize},
 };
-use std::{
-    borrow::Cow, collections::HashMap, fs::File, mem::ManuallyDrop, ops::Deref, os::fd::FromRawFd,
-};
+use std::{borrow::Cow, collections::HashMap, mem::ManuallyDrop, ops::Deref, os::fd::FromRawFd};
+use tokio::fs::File as TokioFile;
 
 const MIME_TYPE_DIR: &str = "vnd.android.document/directory";
 
@@ -131,7 +130,7 @@ pub fn open_or_create_file(
 
 pub struct FileHandle {
     parcel: GlobalRef,
-    file: ManuallyDrop<std::fs::File>,
+    file: ManuallyDrop<TokioFile>,
 }
 
 impl FileHandle {
@@ -153,7 +152,7 @@ impl FileHandle {
 
         let fd = env.call_method(&parcel, "getFd", "()I", &[])?.i()?;
 
-        let file = unsafe { File::from_raw_fd(fd) };
+        let file = unsafe { TokioFile::from_raw_fd(fd) };
 
         Ok(Self {
             parcel,
@@ -161,8 +160,12 @@ impl FileHandle {
         })
     }
 
-    pub fn file(&self) -> &std::fs::File {
+    pub fn file(&self) -> &TokioFile {
         &self.file
+    }
+
+    pub fn file_mut(&mut self) -> &mut TokioFile {
+        &mut self.file
     }
 }
 

@@ -926,15 +926,36 @@ impl Client {
                             };
 
                             // TODO: concurrent
-                            for file in index {
-                                log::debug!("downloading file: {}/{}", file.root, file.path);
+                            for item in index {
+                                log::debug!("downloading file: {}/{}", item.root, item.path);
 
-                                // open a bidirectional stream to send DownloadRequest
+                                // build file path
+                                let file_path = {
+                                    let root_dir_name = format!("musicopy-{}-{}", &item.node_id, &item.root);
+                                    let mut file_path = TreePath::new(download_directory.clone(), root_dir_name.into());
+                                    file_path.push(&item.path);
+                                    file_path
+                                };
+
+                                // create parent directories
+                                let parent_dir_path = file_path.parent();
+                                if let Some(parent) = parent_dir_path {
+                                    crate::fs::create_dir_all(&parent).await
+                                        .context("failed to create directory for root")?;
+                                }
+
+                                // open file for writing
+                                let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
+                                    .context("failed to open file")?;
+
+                                // open a bidirectional stream
                                 let (mut send, mut recv) = self.connection.open_bi().await?;
+
+                                // send download request
                                 let download_request = DownloadRequest {
-                                    node_id: file.node_id,
-                                    root: file.root.clone(),
-                                    path: file.path.clone()
+                                    node_id: item.node_id,
+                                    root: item.root.clone(),
+                                    path: item.path.clone()
                                 };
                                 let download_request_buf = postcard::to_stdvec(&download_request)
                                     .context("failed to serialize download request")?;
@@ -945,36 +966,11 @@ impl Client {
                                     .await
                                     .context("failed to write download request")?;
 
-                                log::debug!("sent download request");
+                                // read file length
+                                let file_len = recv.read_u32().await?;
 
-                                // receive file content instead of buffering in memory
-                                // TODO: stream to file
-                                let file_content_len = recv.read_u32().await?;
-                                let mut file_content_buf = vec![0; file_content_len as usize];
-                                recv.read_exact(&mut file_content_buf)
-                                    .await
-                                    .context("failed to read file content")?;
-
-                                let file_path = {
-                                    let root_dir_name = format!("musicopy-{}-{}", file.node_id, file.root);
-                                    let mut file_path = TreePath::new(download_directory.clone(), root_dir_name.into());
-                                    file_path.push(&file.path);
-                                    file_path
-                                };
-
-                                let parent_dir_path = file_path.parent();
-                                if let Some(parent) = parent_dir_path {
-                                    crate::fs::create_dir_all(&parent)
-                                        .context("failed to create directory for root")?;
-                                }
-
-                                log::debug!("saving file to {:?}", file_path);
-
-                                let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write)
-                                    .context("failed to open file")?;
-
-                                file.write_all(&file_content_buf)
-                                    .context("failed to write file content")?;
+                                // copy from stream to file
+                                tokio::io::copy(&mut recv.take(file_len as u64), &mut file).await?;
 
                                 log::debug!("saved file to {:?}", file_path);
                             }
