@@ -222,6 +222,57 @@ impl<'a> App<'a> {
                 }
             }
 
+            "c" | "connect" => {
+                if parts.len() < 2 {
+                    anyhow::bail!("usage: connect <node_id>");
+                }
+
+                let node_id = parts[1].to_string();
+
+                app_log!("connecting to node: {}", node_id);
+
+                let core = self.core.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = core.connect(&node_id).await {
+                        app_log!("error connecting to node {}: {e:#}", node_id);
+                    }
+                });
+            }
+
+            "dl" | "download" => {
+                if parts.len() < 2 {
+                    anyhow::bail!("usage: download <client #>");
+                }
+
+                let client_num = parts[1]
+                    .parse::<usize>()
+                    .context("failed to parse client number")?;
+
+                if client_num == 0 {
+                    anyhow::bail!("client number must be greater than 0");
+                }
+
+                let Some(model) = &self.model else {
+                    anyhow::bail!("model not initialized");
+                };
+                let node_id = model
+                    .node
+                    .active_clients
+                    .get(client_num - 1)
+                    .ok_or_else(|| anyhow::anyhow!("client number out of range"))?
+                    .node_id
+                    .clone();
+
+                app_log!("downloading from client: {}", client_num);
+
+                let core = self.core.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = core.download_all(&node_id, "/tmp/musicopy-dl") {
+                        app_log!("error downloading from client {}: {e:#}", client_num);
+                    }
+                });
+            }
+
             "help" | "h" | "?" => {
                 app_send!(AppEvent::Screen(AppScreen::Help));
             }
