@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let app = App::new(args.in_memory).await?;
 
     // set up global logger
-    let logger = AppLogger::new();
+    let logger = AppLogger::new_with_default("warn,musicopy_tui=debug,musicopy=debug");
     log::set_boxed_logger(Box::new(logger))?;
     log::set_max_level(log::LevelFilter::Debug);
 
@@ -40,10 +40,12 @@ struct AppLogger {
 }
 
 impl AppLogger {
-    fn new() -> Self {
+    fn new_with_default(default: &str) -> Self {
         let mut filter_builder = env_filter::Builder::new();
         if let Ok(filter) = &std::env::var("RUST_LOG") {
             filter_builder.parse(filter);
+        } else {
+            filter_builder.parse(default);
         }
         Self {
             filter: filter_builder.build(),
