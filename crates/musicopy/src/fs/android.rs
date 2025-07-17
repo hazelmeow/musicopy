@@ -33,7 +33,7 @@ pub fn create_dir_all(path: &TreePath) -> anyhow::Result<String> {
     }
 
     let vm = get_vm();
-    let mut env = vm.attach_current_thread_permanently()?;
+    let mut env = vm.attach_current_thread()?;
 
     let segments = path
         .path
@@ -51,54 +51,27 @@ pub fn create_dir_all(path: &TreePath) -> anyhow::Result<String> {
         .context("Uri::to_string failed")
 }
 
-pub fn create_file(path: &TreePath) -> anyhow::Result<FileHandle> {
-    if path.is_empty() {
-        anyhow::bail!("path is empty");
-    }
-
-    let vm = get_vm();
-    let mut env = vm.attach_current_thread_permanently()?;
-
-    let mut segments = path
-        .path
-        .components()
-        .map(|s| s.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>();
-
-    let Some(filename) = segments.pop() else {
-        anyhow::bail!("path is empty");
-    };
-
-    let tree_uri = Uri::parse(&mut env, &path.tree).context("Uri::parse failed")?;
-    let parent_uri = resolve_dirs(&mut env, &tree_uri, segments, false)?;
-
-    let content_resolver = ContentResolver::get(&mut env).context("ContentResolver::get failed")?;
-
-    // TODO
-    let mime_type_string = env.new_string("text/plain")?;
-    let filename = env.new_string(filename)?;
-
-    let document_uri = DocumentsContract::jni_create_document(
-        &mut env,
-        &content_resolver,
-        &parent_uri,
-        &mime_type_string,
-        &filename,
-    )?;
-
-    let handle = FileHandle::open(&mut env, &document_uri, OpenMode::Write)
-        .context("FileHandle::open failed")?;
-
-    Ok(handle)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessMode {
+    /// Attempt to open the file, failing if it doesn't exist.
+    Open,
+    /// Attempt to create the file, failing if it already exists.
+    Create,
+    /// Attempt to open the file if it exists, otherwise create it.
+    OpenOrCreate,
 }
 
-pub fn open_file(path: &TreePath, mode: OpenMode) -> anyhow::Result<FileHandle> {
+pub fn open_or_create_file(
+    path: &TreePath,
+    access_mode: AccessMode,
+    open_mode: OpenMode,
+) -> anyhow::Result<FileHandle> {
     if path.is_empty() {
         anyhow::bail!("path is empty");
     }
 
     let vm = get_vm();
-    let mut env = vm.attach_current_thread_permanently()?;
+    let mut env = vm.attach_current_thread()?;
 
     let mut segments = path
         .path
@@ -111,7 +84,8 @@ pub fn open_file(path: &TreePath, mode: OpenMode) -> anyhow::Result<FileHandle> 
     };
 
     let tree_uri = Uri::parse(&mut env, &path.tree).context("Uri::parse failed")?;
-    let parent_uri = resolve_dirs(&mut env, &tree_uri, segments, false)?;
+    let parent_uri = resolve_dirs(&mut env, &tree_uri, segments, false)
+        .context("failed to resolve parent directories")?;
 
     let content_resolver = ContentResolver::get(&mut env).context("ContentResolver::get failed")?;
 
@@ -121,11 +95,37 @@ pub fn open_file(path: &TreePath, mode: OpenMode) -> anyhow::Result<FileHandle> 
 
     match child_uri {
         Some(child_uri) => {
-            let handle =
-                FileHandle::open(&mut env, &child_uri, mode).context("FileHandle::open failed")?;
+            if access_mode == AccessMode::Create {
+                anyhow::bail!("file already exists");
+            }
+
+            let handle = FileHandle::open(&mut env, &child_uri, open_mode)
+                .context("FileHandle::open failed")?;
+
             Ok(handle)
         }
-        None => Err(anyhow::anyhow!("file not found: {:?}", path)),
+        None => {
+            if access_mode == AccessMode::Open {
+                anyhow::bail!("file not found: {:?}", path);
+            }
+
+            // TODO
+            let mime_type_string = env.new_string("text/plain")?;
+            let filename = env.new_string(filename)?;
+
+            let document_uri = DocumentsContract::jni_create_document(
+                &mut env,
+                &content_resolver,
+                &parent_uri,
+                &mime_type_string,
+                &filename,
+            )?;
+
+            let handle = FileHandle::open(&mut env, &document_uri, OpenMode::Write)
+                .context("FileHandle::open failed")?;
+
+            Ok(handle)
+        }
     }
 }
 
@@ -173,7 +173,7 @@ impl Drop for FileHandle {
         std::mem::forget(file);
 
         let vm = get_vm();
-        let mut env = match vm.attach_current_thread_permanently() {
+        let mut env = match vm.attach_current_thread() {
             Ok(env) => env,
             Err(e) => {
                 log::error!(
@@ -225,7 +225,7 @@ fn resolve_dirs<'local, 'other_local_1>(
     // TODO: maybe root uri is not necessarily tree uri?
     let mut curr_uri = tree_document_uri.new_local_ref(env)?;
 
-    'outer: for segment in segments {
+    'outer: for segment in &segments {
         let curr_document_id = DocumentsContract::jni_get_document_id(env, &curr_uri)?;
         let curr_children_uri = DocumentsContract::jni_build_child_documents_uri_using_tree(
             env,
@@ -252,7 +252,7 @@ fn resolve_dirs<'local, 'other_local_1>(
                 let child_display_name_std: String =
                     env.get_string(child_display_name.into())?.into();
 
-                if child_display_name_std == segment {
+                if child_display_name_std == *segment {
                     let child_uri = DocumentsContract::jni_build_document_uri_using_tree(
                         env,
                         tree_uri,
@@ -280,7 +280,7 @@ fn resolve_dirs<'local, 'other_local_1>(
 
             curr_uri = child_uri;
         } else {
-            anyhow::bail!("segment not found");
+            anyhow::bail!("segment {:?} not found in path {:?}", segment, segments);
         }
     }
 

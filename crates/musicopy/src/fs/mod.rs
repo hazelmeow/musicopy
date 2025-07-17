@@ -95,7 +95,8 @@ impl TreeFile {
         }
         #[cfg(target_os = "android")]
         {
-            let file = android::create_file(path)?;
+            let file =
+                android::open_or_create_file(path, android::AccessMode::Create, OpenMode::Write)?;
             Ok(Self { file })
         }
     }
@@ -114,7 +115,30 @@ impl TreeFile {
         }
         #[cfg(target_os = "android")]
         {
-            let file = android::open_file(path, mode)?;
+            let file = android::open_or_create_file(path, android::AccessMode::Open, mode)?;
+            Ok(Self { file })
+        }
+    }
+
+    pub fn open_or_create(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
+        #[cfg(not(target_os = "android"))]
+        {
+            let file = match mode {
+                OpenMode::Read => std::fs::OpenOptions::new()
+                    .read(true)
+                    .create(true)
+                    .open(&path.path)?,
+                OpenMode::Write => std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(&path.path)?,
+            };
+            Ok(Self { file })
+        }
+        #[cfg(target_os = "android")]
+        {
+            let file = android::open_or_create_file(path, android::AccessMode::OpenOrCreate, mode)?;
             Ok(Self { file })
         }
     }
