@@ -1,5 +1,7 @@
 //! The app TUI.
 
+pub mod log;
+
 use crate::app::{App, AppMode, AppScreen};
 use ratatui::{
     Frame,
@@ -206,25 +208,6 @@ impl<'a> App<'a> {
         let status_text = Text::from(lines);
 
         Paragraph::new(status_text)
-            .block(block)
-            .render(area, frame.buffer_mut());
-    }
-
-    fn render_log_screen(&mut self, frame: &mut Frame, area: Rect) {
-        let title = Line::from(" Log ".bold());
-        let block = Block::bordered()
-            .title(title.centered())
-            .border_set(border::THICK);
-
-        let log_text = Text::from(
-            self.messages
-                .iter()
-                .map(|s| Line::from(s.as_str()))
-                .collect::<Vec<_>>(),
-        );
-
-        Paragraph::new(log_text)
-            .wrap(Wrap { trim: false })
             .block(block)
             .render(area, frame.buffer_mut());
     }

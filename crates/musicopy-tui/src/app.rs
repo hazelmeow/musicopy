@@ -1,4 +1,7 @@
-use crate::event::{Event, EventHandler, app_send};
+use crate::{
+    event::{Event, EventHandler, app_send},
+    ui::log::LogState,
+};
 use anyhow::Context;
 use musicopy::{Core, CoreOptions, Model};
 use ratatui::{
@@ -21,6 +24,7 @@ pub struct App<'a> {
 
     pub messages: Vec<String>,
 
+    pub log_state: LogState,
     pub command_state: TextState<'a>,
     pub model: Option<Model>, // TODO: would be nice to make this not an option
 }
@@ -87,6 +91,7 @@ impl<'a> App<'a> {
 
             messages: Vec::new(),
 
+            log_state: LogState::default(),
             command_state: TextState::default(),
             model: None,
         })
@@ -134,6 +139,29 @@ impl<'a> App<'a> {
                 // ctrl+c to quit
                 (_, KeyCode::Char('c' | 'C')) if key_event.modifiers == KeyModifiers::CONTROL => {
                     self.events.send(AppEvent::Exit)
+                }
+
+                // log screen
+                (AppScreen::Log, KeyCode::Up) => {
+                    self.log_state.scroll_up();
+                }
+                (AppScreen::Log, KeyCode::Down) => {
+                    self.log_state.scroll_down();
+                }
+                (AppScreen::Log, KeyCode::PageUp) => {
+                    self.log_state.scroll_page_up();
+                }
+                (AppScreen::Log, KeyCode::PageDown) => {
+                    self.log_state.scroll_page_down();
+                }
+                (AppScreen::Log, KeyCode::Home | KeyCode::Char('g')) => {
+                    self.log_state.scroll_to_top();
+                }
+                (AppScreen::Log, KeyCode::End | KeyCode::Char('G')) => {
+                    self.log_state.scroll_to_bottom();
+                }
+                (AppScreen::Log, KeyCode::Char('f')) => {
+                    self.log_state.toggle_tail();
                 }
 
                 _ => {}
