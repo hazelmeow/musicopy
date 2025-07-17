@@ -925,54 +925,69 @@ impl Client {
                                 continue;
                             };
 
-                            // TODO: concurrent
-                            for item in index {
-                                log::debug!("downloading file: {}/{}", item.root, item.path);
+                            // TODO: tune concurrency level
+                            let mut buffered = futures::stream::iter(index)
+                                .map(|item| {
+                                    let download_directory = download_directory.clone();
+                                    let connection = self.connection.clone();
+                                    async move {
+                                        log::debug!("downloading file: {}/{}", item.root, item.path);
 
-                                // build file path
-                                let file_path = {
-                                    let root_dir_name = format!("musicopy-{}-{}", &item.node_id, &item.root);
-                                    let mut file_path = TreePath::new(download_directory.clone(), root_dir_name.into());
-                                    file_path.push(&item.path);
-                                    file_path
-                                };
+                                        // build file path
+                                        let file_path = {
+                                            let root_dir_name = format!("musicopy-{}-{}", &item.node_id, &item.root);
+                                            let mut file_path = TreePath::new(download_directory, root_dir_name.into());
+                                            file_path.push(&item.path);
+                                            file_path
+                                        };
 
-                                // create parent directories
-                                let parent_dir_path = file_path.parent();
-                                if let Some(parent) = parent_dir_path {
-                                    crate::fs::create_dir_all(&parent).await
-                                        .context("failed to create directory for root")?;
+                                        // create parent directories
+                                        let parent_dir_path = file_path.parent();
+                                        if let Some(parent) = parent_dir_path {
+                                            crate::fs::create_dir_all(&parent).await
+                                                .context("failed to create directory for root")?;
+                                        }
+
+                                        // open file for writing
+                                        let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
+                                            .context("failed to open file")?;
+
+                                        // open a bidirectional stream
+                                        let (mut send, mut recv) = connection.open_bi().await?;
+
+                                        // send download request
+                                        let download_request = DownloadRequest {
+                                            node_id: item.node_id,
+                                            root: item.root.clone(),
+                                            path: item.path.clone()
+                                        };
+                                        let download_request_buf = postcard::to_stdvec(&download_request)
+                                            .context("failed to serialize download request")?;
+                                        send.write_u32(download_request_buf.len() as u32)
+                                            .await
+                                            .context("failed to write download request length")?;
+                                        send.write_all(&download_request_buf)
+                                            .await
+                                            .context("failed to write download request")?;
+
+                                        // read file length
+                                        let file_len = recv.read_u32().await?;
+
+                                        // copy from stream to file
+                                        tokio::io::copy(&mut recv.take(file_len as u64), &mut file).await?;
+
+                                        log::debug!("saved file to {:?}", file_path);
+
+                                        Ok::<(), anyhow::Error>(())
+                                    }
+                                })
+                                .buffer_unordered(4);
+
+                            while let Some(res) = buffered.next().await {
+                                if let Err(e) = res {
+                                    log::error!("error downloading item: {e}");
+                                    continue;
                                 }
-
-                                // open file for writing
-                                let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
-                                    .context("failed to open file")?;
-
-                                // open a bidirectional stream
-                                let (mut send, mut recv) = self.connection.open_bi().await?;
-
-                                // send download request
-                                let download_request = DownloadRequest {
-                                    node_id: item.node_id,
-                                    root: item.root.clone(),
-                                    path: item.path.clone()
-                                };
-                                let download_request_buf = postcard::to_stdvec(&download_request)
-                                    .context("failed to serialize download request")?;
-                                send.write_u32(download_request_buf.len() as u32)
-                                    .await
-                                    .context("failed to write download request length")?;
-                                send.write_all(&download_request_buf)
-                                    .await
-                                    .context("failed to write download request")?;
-
-                                // read file length
-                                let file_len = recv.read_u32().await?;
-
-                                // copy from stream to file
-                                tokio::io::copy(&mut recv.take(file_len as u64), &mut file).await?;
-
-                                log::debug!("saved file to {:?}", file_path);
                             }
                         }
                     }

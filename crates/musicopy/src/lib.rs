@@ -137,6 +137,7 @@ impl Core {
         std::thread::spawn({
             let event_handler = event_handler.clone();
             move || {
+                // TODO: test multi thread on android? probably want it if it works
                 let builder = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
