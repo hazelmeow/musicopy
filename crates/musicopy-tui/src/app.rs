@@ -209,7 +209,7 @@ impl<'a> App<'a> {
                 self.core.add_library_root(name, path)?;
             }
 
-            "accept" => {
+            "a" | "accept" => {
                 app_log!("accepting pending servers");
 
                 let Some(model) = &self.model else {
