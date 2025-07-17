@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -153,7 +154,7 @@ fun App(
                             model.node.pendingClients.find { x -> x.nodeId == nodeId }
                         val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
 
-                        if (activeClient != null) {
+                        if (activeClient != null && navController.currentDestination?.hasRoute<Waiting>() == true) {
                             navController.navigate(PreTransfer(nodeId = nodeId))
                         }
 
