@@ -72,7 +72,8 @@ impl Core {
                         .with_tag("musicopy")
                         .with_filter(
                             android_logger::FilterBuilder::new()
-                                .parse("debug,iroh=warn")
+                                .try_parse("musicopy=debug")
+                                .expect("failed to parse log filter")
                                 .build(),
                         ),
                 );
