@@ -98,10 +98,11 @@ impl<'a> App<'a> {
             terminal.draw(|frame| self.render(frame))?;
             match self.events.next().await? {
                 Event::Tick => self.tick(),
-                Event::Crossterm(event) => match event {
-                    crossterm::event::Event::Key(key_event) => self.handle_key_events(key_event)?,
-                    _ => {}
-                },
+                Event::Crossterm(event) => {
+                    if let crossterm::event::Event::Key(key_event) = event {
+                        self.handle_key_events(key_event)?
+                    }
+                }
                 Event::App(app_event) => self
                     .handle_app_events(app_event)
                     .context("handling app event failed")?,

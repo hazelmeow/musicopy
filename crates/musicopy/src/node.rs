@@ -985,8 +985,6 @@ impl Client {
                 next_message = recv.next() => {
                     match next_message {
                         Some(Ok(message)) => {
-                            log::debug!("received message: {message:?}");
-
                             match message {
                                 ServerMessage::Index(new_index) => {
                                     log::info!("received index with {} items", new_index.len());
