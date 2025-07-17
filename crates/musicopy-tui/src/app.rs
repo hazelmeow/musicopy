@@ -64,7 +64,7 @@ pub(crate) use app_log;
 
 impl<'a> App<'a> {
     /// Constructs a new instance of [`App`].
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(in_memory: bool) -> anyhow::Result<Self> {
         // initialize as early as possible
         let events = EventHandler::new();
 
@@ -72,7 +72,7 @@ impl<'a> App<'a> {
             Arc::new(AppEventHandler),
             CoreOptions {
                 init_logging: false,
-                in_memory: true,
+                in_memory,
             },
         )?;
 

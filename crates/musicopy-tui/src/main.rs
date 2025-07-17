@@ -6,11 +6,21 @@ use crate::{
     app::{App, AppEvent},
     event::app_send,
 };
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Whether to store state in memory only, without persisting to disk.
+    #[arg(long, short = 'm', default_value_t = false)]
+    in_memory: bool,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
     // initialize app
-    let app = App::new().await?;
+    let app = App::new(args.in_memory).await?;
 
     // set up global logger
     let logger = AppLogger::new();
