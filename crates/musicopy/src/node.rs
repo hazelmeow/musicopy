@@ -8,7 +8,10 @@
 //! A `Server` is a struct representing an incoming connection from a client.
 //! Servers send files, primarily used in the desktop app.
 
-use crate::database::Database;
+use crate::{
+    database::Database,
+    fs::{OpenMode, TreeFile, TreePath},
+};
 use anyhow::Context;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
@@ -102,7 +105,7 @@ pub enum NodeCommand {
 
     DownloadAll {
         client: NodeId,
-        download_directory: PathBuf,
+        download_directory: String,
     },
 
     Stop,
@@ -746,7 +749,7 @@ impl Server {
 enum ClientCommand {
     Close,
 
-    DownloadAll { download_directory: PathBuf },
+    DownloadAll { download_directory: String },
 }
 
 #[derive(Debug, Clone)]
@@ -952,22 +955,28 @@ impl Client {
                                     .await
                                     .context("failed to read file content")?;
 
-                                let root_dir_name = format!("musicopy-{}-{}", file.node_id, file.root);
+                                let file_path = {
+                                    let root_dir_name = format!("musicopy-{}-{}", file.node_id, file.root);
+                                    let mut file_path = TreePath::new(download_directory.clone(), root_dir_name.into());
+                                    file_path.push(&file.path);
+                                    file_path
+                                };
 
-                                // TODO: need special handling on Android
-
-                                let file_path = download_directory.join(root_dir_name).join(&file.path);
-                                if let Some(parent) = file_path.parent() {
-                                    tokio::fs::create_dir_all(parent)
-                                        .await
-                                        .context("failed to create parent directory")?;
+                                let parent_dir_path = file_path.parent();
+                                if let Some(parent) = parent_dir_path {
+                                    crate::fs::create_dir_all(&parent)
+                                        .context("failed to create directory for root")?;
                                 }
 
-                                tokio::fs::write(&file_path, file_content_buf)
-                                    .await
+                                log::debug!("saving file to {:?}", file_path);
+
+                                let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write)
+                                    .context("failed to open file")?;
+
+                                file.write_all(&file_content_buf)
                                     .context("failed to write file content")?;
 
-                                log::debug!("saved file to {}", file_path.display());
+                                log::debug!("saved file to {:?}", file_path);
                             }
                         }
                     }
