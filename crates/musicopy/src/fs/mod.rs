@@ -76,6 +76,13 @@ impl TreePath {
     pub fn is_empty(&self) -> bool {
         self.path.as_os_str().is_empty()
     }
+
+    #[cfg(not(target_os = "android"))]
+    pub fn resolve_path(&self) -> PathBuf {
+        let mut p = PathBuf::from(&self.tree);
+        p.push(&self.path);
+        p
+    }
 }
 
 pub struct TreeFile {
@@ -90,7 +97,8 @@ impl TreeFile {
     pub fn create(path: &TreePath) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
-            let file = std::fs::File::create(&path.path)?;
+            let resolved_path = path.resolve_path();
+            let file = std::fs::File::create(&resolved_path)?;
             Ok(Self { file })
         }
         #[cfg(target_os = "android")]
@@ -104,12 +112,15 @@ impl TreeFile {
     pub fn open(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
+            let resolved_path = path.resolve_path();
             let file = match mode {
-                OpenMode::Read => std::fs::OpenOptions::new().read(true).open(&path.path)?,
+                OpenMode::Read => std::fs::OpenOptions::new()
+                    .read(true)
+                    .open(&resolved_path)?,
                 OpenMode::Write => std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
-                    .open(&path.path)?,
+                    .open(&resolved_path)?,
             };
             Ok(Self { file })
         }
@@ -123,16 +134,18 @@ impl TreeFile {
     pub fn open_or_create(path: &TreePath, mode: OpenMode) -> anyhow::Result<Self> {
         #[cfg(not(target_os = "android"))]
         {
+            let resolved_path = path.resolve_path();
             let file = match mode {
                 OpenMode::Read => std::fs::OpenOptions::new()
                     .read(true)
+                    .truncate(false)
                     .create(true)
-                    .open(&path.path)?,
+                    .open(&resolved_path)?,
                 OpenMode::Write => std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
                     .create(true)
-                    .open(&path.path)?,
+                    .open(&resolved_path)?,
             };
             Ok(Self { file })
         }
@@ -163,7 +176,8 @@ impl TreeFile {
 pub fn create_dir_all(path: &TreePath) -> anyhow::Result<()> {
     #[cfg(not(target_os = "android"))]
     {
-        std::fs::create_dir_all(&path.path)?;
+        let resolved_path = path.resolve_path();
+        std::fs::create_dir_all(&resolved_path)?;
         Ok(())
     }
     #[cfg(target_os = "android")]
