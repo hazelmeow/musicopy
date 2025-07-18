@@ -207,11 +207,12 @@ impl<'a> App<'a> {
             ])
         }));
 
-        // server jobs
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        // server jobs
         let server_jobs = model
             .node
             .active_servers
@@ -298,6 +299,95 @@ impl<'a> App<'a> {
             lines.push(Line::from(""));
             lines.push(Line::from("Outgoing Transfers".bold()));
             lines.extend(server_jobs);
+        }
+
+        // client jobs
+        let client_jobs = model
+            .node
+            .active_clients
+            .iter()
+            .flat_map(|client| {
+                if client.transfer_jobs.is_empty() {
+                    return vec![];
+                }
+
+                let (count_inprogress, count_finished, count_failed) =
+                    client.transfer_jobs.iter().fold(
+                        (0, 0, 0),
+                        |(inprogress, finished, failed), job| match &job.progress {
+                            TransferJobProgressModel::InProgress { .. } => {
+                                (inprogress + 1, finished, failed)
+                            }
+                            TransferJobProgressModel::Finished { .. } => {
+                                (inprogress, finished + 1, failed)
+                            }
+                            TransferJobProgressModel::Failed { .. } => {
+                                (inprogress, finished, failed + 1)
+                            }
+                        },
+                    );
+
+                let mut job_lines = vec![Line::from(vec![
+                    " - ".into(),
+                    shorten_id(&client.node_id).blue(),
+                    ": ".into(),
+                    count_inprogress.to_string().green(),
+                    " in progress / ".into(),
+                    count_finished.to_string().green(),
+                    " finished / ".into(),
+                    count_failed.to_string().green(),
+                    " failed".into(),
+                ])];
+
+                // add lines for in-progress jobs
+                for job in &client.transfer_jobs {
+                    if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
+                        // calculate sizes in MB
+                        let progress_mb = *bytes as f64 / 1_000_000.0;
+                        let size_mb = job.file_size as f64 / 1_000_000.0;
+
+                        // calculate percent
+                        let progress_percent = if job.file_size > 0 {
+                            (*bytes as f64 / job.file_size as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+
+                        // calculate speed in MB/s
+                        let elapsed = now - job.started_at;
+                        let bytes_per_second = if elapsed > 0 {
+                            (*bytes as f64) / (elapsed as f64)
+                        } else {
+                            *bytes as f64
+                        };
+                        let mbytes_per_second = bytes_per_second / 1_000_000.0;
+
+                        job_lines.push(Line::from(vec![
+                            "   - ".into(),
+                            job.file_root.clone().blue(),
+                            "/".blue(),
+                            job.file_path.clone().blue(),
+                            " [".green(),
+                            format!("{:.1}", progress_mb).green(),
+                            " MB/".green(),
+                            format!("{:.1}", size_mb).green(),
+                            " MB ".green(),
+                            format!("{:.0}", progress_percent).green(),
+                            "% ".green(),
+                            format!("{:.2}", mbytes_per_second).green(),
+                            " MB/s".green(),
+                            "]".green(),
+                        ]));
+                    }
+                }
+
+                job_lines
+            })
+            .collect::<Vec<_>>();
+        if !client_jobs.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from("Incoming Transfers".bold()));
+            lines.extend(client_jobs);
         }
 
         let status_text = Text::from(lines);

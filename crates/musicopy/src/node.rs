@@ -101,6 +101,7 @@ pub struct ClientModel {
     pub latency_ms: Option<u64>,
 
     pub index: Option<Vec<IndexItemModel>>,
+    pub transfer_jobs: Vec<TransferJobModel>,
 }
 
 /// Node state sent to Compose.
@@ -118,6 +119,7 @@ pub struct NodeModel {
     pub conn_success: u64,
     pub conn_direct: u64,
 
+    // TODO: maybe just one vec and expose a bool for active/pending
     pub active_servers: Vec<ServerModel>,
     pub pending_servers: Vec<ServerModel>,
 
@@ -430,6 +432,42 @@ impl Node {
                         None
                     };
 
+                    let transfer_jobs = {
+                        client_handle
+                            .jobs
+                            .iter()
+                            .map(|entry| {
+                                let job = entry.value();
+
+                                let progress = match &job.progress {
+                                    TransferJobProgress::InProgress { written } => {
+                                        TransferJobProgressModel::InProgress {
+                                            bytes: written.load(Ordering::Relaxed),
+                                        }
+                                    }
+                                    TransferJobProgress::Finished { finished_at } => {
+                                        TransferJobProgressModel::Finished {
+                                            finished_at: *finished_at,
+                                        }
+                                    }
+                                    TransferJobProgress::Failed { error } => {
+                                        TransferJobProgressModel::Failed {
+                                            error: format!("{error:#}"),
+                                        }
+                                    }
+                                };
+
+                                TransferJobModel {
+                                    started_at: job.started_at,
+                                    file_root: job.file_root.clone(),
+                                    file_path: job.file_path.clone(),
+                                    file_size: job.file_size,
+                                    progress,
+                                }
+                            })
+                            .collect()
+                    };
+
                     let model = ClientModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
@@ -439,6 +477,7 @@ impl Node {
                         latency_ms,
 
                         index,
+                        transfer_jobs,
                     };
 
                     if accepted { Ok(model) } else { Err(model) }
@@ -559,7 +598,7 @@ struct TransferJob {
     started_at: u64,
     file_root: String,
     file_path: String,
-    file_size: u64,
+    file_size: u64, // TODO: maybe optional for client end, or split into two structs
     progress: TransferJobProgress,
 }
 
@@ -879,6 +918,7 @@ struct ClientHandle {
 
     accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
+    jobs: Arc<DashMap<u64, TransferJob>>,
 }
 
 struct Client {
@@ -887,8 +927,11 @@ struct Client {
 
     connected_at: u64,
 
+    next_job_id: Arc<AtomicU64>,
+
     accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
+    jobs: Arc<DashMap<u64, TransferJob>>,
 }
 
 impl Client {
@@ -902,8 +945,11 @@ impl Client {
 
             connected_at: unix_epoch_now_secs(),
 
+            next_job_id: Arc::new(AtomicU64::new(0)),
+
             accepted: Arc::new(AtomicBool::new(false)),
             index: Arc::new(Mutex::new(None)),
+            jobs: Arc::new(DashMap::new()),
         }
     }
 
@@ -966,6 +1012,7 @@ impl Client {
 
                     accepted: self.accepted.clone(),
                     index: self.index.clone(),
+                    jobs: self.jobs.clone(),
                 },
             ))
             .expect("failed to send server handle");
@@ -1045,6 +1092,8 @@ impl Client {
                                 .map(|item| {
                                     let download_directory = download_directory.clone();
                                     let connection = self.connection.clone();
+                                    let next_job_id = self.next_job_id.clone();
+                                    let jobs = self.jobs.clone();
                                     async move {
                                         log::debug!("downloading file: {}/{}", item.root, item.path);
 
@@ -1088,8 +1137,31 @@ impl Client {
                                         // read file length
                                         let file_len = recv.read_u32().await?;
 
+                                        // insert job
+                                        // TODO: would be nice to create the job earlier, but we don't have the file size yet
+                                        let job_id = next_job_id.fetch_add(1, Ordering::Relaxed);
+                                        let written = Arc::new(AtomicU64::new(0));
+                                        {
+                                            jobs.insert(job_id, TransferJob {
+                                                started_at: unix_epoch_now_secs(),
+                                                file_root: item.root.clone(),
+                                                file_path: item.path.clone(),
+                                                file_size: file_len as u64,
+                                                progress: TransferJobProgress::InProgress { written: written.clone() },
+                                            });
+                                        }
+
                                         // copy from stream to file
-                                        tokio::io::copy(&mut recv.take(file_len as u64), &mut file).await?;
+                                        let mut file_progress = WriteProgress::new(written.clone(), file);
+                                        tokio::io::copy(&mut recv.take(file_len as u64), &mut file_progress).await?;
+
+                                        // mark job as finished
+                                        {
+                                            jobs.alter(&job_id, |_, mut job| {
+                                                job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
+                                                job
+                                            });
+                                        }
 
                                         log::debug!("saved file to {:?}", file_path);
 
