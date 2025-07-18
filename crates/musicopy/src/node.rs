@@ -13,6 +13,7 @@ use crate::{
     fs::{OpenMode, TreeFile, TreePath},
 };
 use anyhow::Context;
+use dashmap::DashMap;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use iroh::{
     Endpoint, NodeAddr, NodeId, SecretKey,
@@ -25,17 +26,46 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::SystemTime,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{mpsc, oneshot},
 };
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
+
+/// Model of progress for a transfer job.
+#[derive(Debug, uniffi::Enum)]
+pub enum TransferJobProgressModel {
+    InProgress {
+        /// Number of bytes written so far.
+        bytes: u64,
+    },
+    Finished {
+        finished_at: u64,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+/// Model of a transfer job.
+#[derive(Debug, uniffi::Record)]
+pub struct TransferJobModel {
+    pub started_at: u64,
+    pub file_root: String,
+    pub file_path: String,
+    pub file_size: u64,
+    pub progress: TransferJobProgressModel,
+}
 
 /// Model of an incoming connection.
 #[derive(Debug, uniffi::Record)]
@@ -46,6 +76,8 @@ pub struct ServerModel {
 
     pub connection_type: String,
     pub latency_ms: Option<u64>,
+
+    pub transfer_jobs: Vec<TransferJobModel>,
 }
 
 /// Model of an item in the index sent by the server.
@@ -300,9 +332,7 @@ impl Node {
             let (mut active_servers, mut pending_servers) = servers
                 .iter()
                 .map(|(node_id, server_handle)| {
-                    let accepted = server_handle
-                        .accepted
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let accepted = server_handle.accepted.load(Ordering::Relaxed);
 
                     let remote_info = self.router.endpoint().remote_info(*node_id);
                     let connection_type = remote_info
@@ -313,12 +343,49 @@ impl Node {
                         .and_then(|info| info.latency)
                         .map(|latency| latency.as_millis() as u64);
 
+                    let transfer_jobs = {
+                        server_handle
+                            .jobs
+                            .iter()
+                            .map(|entry| {
+                                let job = entry.value();
+
+                                let progress = match &job.progress {
+                                    TransferJobProgress::InProgress { written } => {
+                                        TransferJobProgressModel::InProgress {
+                                            bytes: written.load(Ordering::Relaxed),
+                                        }
+                                    }
+                                    TransferJobProgress::Finished { finished_at } => {
+                                        TransferJobProgressModel::Finished {
+                                            finished_at: *finished_at,
+                                        }
+                                    }
+                                    TransferJobProgress::Failed { error } => {
+                                        TransferJobProgressModel::Failed {
+                                            error: format!("{error:#}"),
+                                        }
+                                    }
+                                };
+
+                                TransferJobModel {
+                                    started_at: job.started_at,
+                                    file_root: job.file_root.clone(),
+                                    file_path: job.file_path.clone(),
+                                    file_size: job.file_size,
+                                    progress,
+                                }
+                            })
+                            .collect()
+                    };
+
                     let model = ServerModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
                         connected_at: server_handle.connected_at,
                         connection_type,
                         latency_ms,
+                        transfer_jobs,
                     };
 
                     if accepted { Ok(model) } else { Err(model) }
@@ -334,9 +401,7 @@ impl Node {
             let (mut active_clients, mut pending_clients) = clients
                 .iter()
                 .map(|(node_id, client_handle)| {
-                    let accepted = client_handle
-                        .accepted
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let accepted = client_handle.accepted.load(Ordering::Relaxed);
 
                     let remote_info = self.router.endpoint().remote_info(*node_id);
                     let connection_type = remote_info
@@ -489,6 +554,22 @@ enum ServerCommand {
     Close,
 }
 
+#[derive(Debug)]
+struct TransferJob {
+    started_at: u64,
+    file_root: String,
+    file_path: String,
+    file_size: u64,
+    progress: TransferJobProgress,
+}
+
+#[derive(Debug)]
+enum TransferJobProgress {
+    InProgress { written: Arc<AtomicU64> },
+    Finished { finished_at: u64 },
+    Failed { error: anyhow::Error },
+}
+
 #[derive(Debug, Clone)]
 struct ServerHandle {
     tx: mpsc::UnboundedSender<ServerCommand>,
@@ -496,6 +577,7 @@ struct ServerHandle {
     connected_at: u64,
 
     accepted: Arc<AtomicBool>,
+    jobs: Arc<DashMap<u64, TransferJob>>,
 }
 
 struct Server {
@@ -505,7 +587,10 @@ struct Server {
 
     connected_at: u64,
 
+    next_job_id: AtomicU64,
+
     accepted: Arc<AtomicBool>,
+    jobs: Arc<DashMap<u64, TransferJob>>,
 }
 
 impl Server {
@@ -519,12 +604,12 @@ impl Server {
             connection,
             handle_tx,
 
-            connected_at: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            connected_at: unix_epoch_now_secs(),
+
+            next_job_id: AtomicU64::new(0),
 
             accepted: Arc::new(AtomicBool::new(false)),
+            jobs: Arc::new(DashMap::new()),
         }
     }
 
@@ -585,6 +670,7 @@ impl Server {
                     connected_at: self.connected_at,
 
                     accepted: self.accepted.clone(),
+                    jobs: self.jobs.clone(),
                 },
             ))
             .expect("failed to send server handle");
@@ -627,8 +713,7 @@ impl Server {
         }
 
         // mark as accepted
-        self.accepted
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.accepted.store(true, Ordering::Relaxed);
 
         // send Accepted message
         send.send(ServerMessage::Accepted)
@@ -698,14 +783,48 @@ impl Server {
                                 )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
                             };
 
+                            let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+
                             // send file content
                             let file_path = PathBuf::from(&file.local_path);
-                            if file_path.exists() {
-                                let file_content = tokio::fs::read(file_path).await?;
-                                send.write_u32(file_content.len() as u32).await?;
-                                send.write_all(&file_content).await?;
-                            } else {
+                            if !file_path.exists() {
                                 anyhow::bail!("file at local_path does not exist: {}", file.local_path);
+                            }
+
+                            // get file size
+                            let metadata = file_path.metadata().context("failed to get file metadata")?;
+                            let file_size = metadata.len();
+
+                            let written = Arc::new(AtomicU64::new(0));
+
+                            // insert job
+                            {
+                                self.jobs.insert(job_id, TransferJob {
+                                    started_at: unix_epoch_now_secs(),
+                                    file_root: download_req.root.clone(),
+                                    file_path: download_req.path.clone(),
+                                    file_size,
+                                    progress: TransferJobProgress::InProgress { written: written.clone() },
+                                });
+                            }
+
+                            // read file to buffer
+                            // TODO: stream instead of reading into memory?
+                            let file_content = tokio::fs::read(file_path).await?;
+
+                            // write file size to stream
+                            send.write_u32(file_content.len() as u32).await?;
+
+                            // TODO: handle errors during send
+                            let mut send_progress = WriteProgress::new(written.clone(), send);
+                            send_progress.write_all(&file_content).await?;
+
+                            // mark job as finished
+                            {
+                                self.jobs.alter(&job_id, |_, mut job| {
+                                    job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
+                                    job
+                                });
                             }
 
                             log::info!("finished sending file content for {}/{}", download_req.root, download_req.path);
@@ -781,10 +900,7 @@ impl Client {
             handle_tx,
             connection,
 
-            connected_at: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            connected_at: unix_epoch_now_secs(),
 
             accepted: Arc::new(AtomicBool::new(false)),
             index: Arc::new(Mutex::new(None)),
@@ -900,8 +1016,7 @@ impl Client {
         }
 
         // mark as accepted
-        self.accepted
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.accepted.store(true, Ordering::Relaxed);
 
         // main loop
         loop {
@@ -1035,5 +1150,69 @@ impl Client {
         self.connection.closed().await;
 
         Ok(())
+    }
+}
+
+/// Returns the current system time in seconds since the Unix epoch.
+fn unix_epoch_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Wrapper for `T: AsyncWrite` that tracks the number of bytes written in an `Arc<AtomicU64>`.
+struct WriteProgress<T> {
+    inner: T,
+    written: Arc<AtomicU64>,
+}
+
+impl<T> WriteProgress<T> {
+    fn new(written: Arc<AtomicU64>, inner: T) -> Self {
+        Self { inner, written }
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for WriteProgress<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        let res = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let std::task::Poll::Ready(Ok(size)) = &res {
+            self.written.fetch_add(*size as u64, Ordering::Relaxed);
+        }
+        res
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        let res = Pin::new(&mut self.inner).poll_write_vectored(cx, bufs);
+        if let std::task::Poll::Ready(Ok(size)) = &res {
+            self.written.fetch_add(*size as u64, Ordering::Relaxed);
+        }
+        res
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 }
