@@ -81,7 +81,7 @@ impl Core {
             #[cfg(not(target_os = "android"))]
             {
                 env_logger::Builder::from_env(
-                    env_logger::Env::default().default_filter_or("debug,iroh=warn"),
+                    env_logger::Env::default().default_filter_or("musicopy=debug"),
                 )
                 .init();
             }

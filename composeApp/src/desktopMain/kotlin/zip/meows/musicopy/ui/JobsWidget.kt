@@ -36,7 +36,7 @@ import zip.meows.musicopy.shortenNodeId
 fun JobsWidget(
     model: Model,
 ) {
-    val activeServers = model.node.activeServers
+    val activeServers = model.node.servers.filter { it.accepted }
 
     val numJobs = activeServers.size
     val visible = numJobs > 0

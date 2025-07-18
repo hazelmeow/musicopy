@@ -245,9 +245,11 @@ impl<'a> App<'a> {
                     anyhow::bail!("model not initialized");
                 };
 
-                for server in &model.node.pending_servers {
-                    app_log!("accepting server: {}", server.node_id);
-                    self.core.accept_connection(&server.node_id)?;
+                for server in &model.node.servers {
+                    if !server.accepted {
+                        app_log!("accepting server: {}", server.node_id);
+                        self.core.accept_connection(&server.node_id)?;
+                    }
                 }
             }
 
@@ -286,8 +288,10 @@ impl<'a> App<'a> {
                 };
                 let node_id = model
                     .node
-                    .active_clients
-                    .get(client_num - 1)
+                    .clients
+                    .iter()
+                    .filter(|c| c.accepted)
+                    .nth(client_num - 1)
                     .ok_or_else(|| anyhow::anyhow!("client number out of range"))?
                     .node_id
                     .clone();

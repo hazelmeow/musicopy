@@ -20,7 +20,6 @@ use iroh::{
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
-use itertools::Itertools;
 use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -74,6 +73,8 @@ pub struct ServerModel {
     pub node_id: String,
     pub connected_at: u64,
 
+    pub accepted: bool,
+
     pub connection_type: String,
     pub latency_ms: Option<u64>,
 
@@ -97,6 +98,8 @@ pub struct ClientModel {
     pub node_id: String,
     pub connected_at: u64,
 
+    pub accepted: bool,
+
     pub connection_type: String,
     pub latency_ms: Option<u64>,
 
@@ -119,12 +122,8 @@ pub struct NodeModel {
     pub conn_success: u64,
     pub conn_direct: u64,
 
-    // TODO: maybe just one vec and expose a bool for active/pending
-    pub active_servers: Vec<ServerModel>,
-    pub pending_servers: Vec<ServerModel>,
-
-    pub active_clients: Vec<ClientModel>,
-    pub pending_clients: Vec<ClientModel>,
+    pub servers: Vec<ServerModel>,
+    pub clients: Vec<ClientModel>,
 }
 
 #[derive(Debug)]
@@ -329,9 +328,9 @@ impl Node {
 
         let metrics = self.router.endpoint().metrics();
 
-        let (active_servers, pending_servers) = {
+        let servers = {
             let servers = self.servers.lock().unwrap();
-            let (mut active_servers, mut pending_servers) = servers
+            let mut servers = servers
                 .iter()
                 .map(|(node_id, server_handle)| {
                     let accepted = server_handle.accepted.load(Ordering::Relaxed);
@@ -381,26 +380,27 @@ impl Node {
                             .collect()
                     };
 
-                    let model = ServerModel {
+                    ServerModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
                         connected_at: server_handle.connected_at,
+
+                        accepted,
+
                         connection_type,
                         latency_ms,
-                        transfer_jobs,
-                    };
 
-                    if accepted { Ok(model) } else { Err(model) }
+                        transfer_jobs,
+                    }
                 })
-                .partition_result::<Vec<_>, Vec<_>, _, _>();
-            active_servers.sort_by_key(|c| c.connected_at);
-            pending_servers.sort_by_key(|c| c.connected_at);
-            (active_servers, pending_servers)
+                .collect::<Vec<_>>();
+            servers.sort_by_key(|c| c.connected_at);
+            servers
         };
 
-        let (active_clients, pending_clients) = {
+        let clients = {
             let clients = self.clients.lock().unwrap();
-            let (mut active_clients, mut pending_clients) = clients
+            let mut clients = clients
                 .iter()
                 .map(|(node_id, client_handle)| {
                     let accepted = client_handle.accepted.load(Ordering::Relaxed);
@@ -468,24 +468,23 @@ impl Node {
                             .collect()
                     };
 
-                    let model = ClientModel {
+                    ClientModel {
                         name: "unknown".to_string(), // TODO: get real name
                         node_id: node_id.to_string(),
                         connected_at: client_handle.connected_at,
+
+                        accepted,
 
                         connection_type,
                         latency_ms,
 
                         index,
                         transfer_jobs,
-                    };
-
-                    if accepted { Ok(model) } else { Err(model) }
+                    }
                 })
-                .partition_result::<Vec<_>, Vec<_>, _, _>();
-            active_clients.sort_by_key(|c| c.connected_at);
-            pending_clients.sort_by_key(|c| c.connected_at);
-            (active_clients, pending_clients)
+                .collect::<Vec<_>>();
+            clients.sort_by_key(|c| c.connected_at);
+            clients
         };
 
         NodeModel {
@@ -501,11 +500,8 @@ impl Node {
             conn_success: metrics.magicsock.connection_handshake_success.get(),
             conn_direct: metrics.magicsock.connection_became_direct.get(),
 
-            active_servers,
-            pending_servers,
-
-            active_clients,
-            pending_clients,
+            servers,
+            clients,
         }
     }
 }

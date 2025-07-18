@@ -19,7 +19,9 @@ fun mockServerModel(): ServerModel {
         name = "My Phone",
         nodeId = mockNodeId(),
         connectedAt = Clock.System.now().epochSeconds.toULong(),
+        accepted = true,
         connectionType = "direct",
-        latencyMs = 42u
+        latencyMs = 42u,
+        transferJobs = emptyList()
     )
 }

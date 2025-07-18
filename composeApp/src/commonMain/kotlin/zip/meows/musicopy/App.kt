@@ -25,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.musicopy.CoreException
 import zip.meows.musicopy.ui.screens.ConnectManually
@@ -62,7 +63,13 @@ fun App(
             connectCount += 1
             try {
                 viewModel.instance.connect(nodeId = nodeId)
-                navController.navigate(Waiting(nodeId = nodeId))
+                delay(100) // TODO
+                val client = viewModel.state.value?.node?.clients?.find { it.nodeId == nodeId }
+                if (client?.accepted == true) {
+                    navController.navigate(PreTransfer(nodeId = nodeId))
+                } else {
+                    navController.navigate(Waiting(nodeId = nodeId))
+                }
             } catch (e: CoreException) {
                 // TODO
                 println("error during connect: $e")
@@ -150,15 +157,13 @@ fun App(
                     val waiting: Waiting = backStackEntry.toRoute()
                     val nodeId = waiting.nodeId
                     model?.let { model ->
-                        val pendingClient =
-                            model.node.pendingClients.find { x -> x.nodeId == nodeId }
-                        val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
+                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
 
-                        if (activeClient != null && navController.currentDestination?.hasRoute<Waiting>() == true) {
+                        if (client?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
                             navController.navigate(PreTransfer(nodeId = nodeId))
                         }
 
-                        pendingClient?.let { clientModel ->
+                        client?.let { clientModel ->
                             WaitingScreen(
                                 clientModel = clientModel,
                                 onCancel = {
@@ -172,13 +177,13 @@ fun App(
                     val preTransfer: PreTransfer = backStackEntry.toRoute()
                     val nodeId = preTransfer.nodeId
                     model?.let { model ->
-                        val activeClient = model.node.activeClients.find { x -> x.nodeId == nodeId }
+                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
 
                         val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
                             null
                         )
 
-                        activeClient?.let { clientModel ->
+                        client?.let { clientModel ->
                             PreTransferScreen(
                                 clientModel = clientModel,
                                 onDownloadAll = {

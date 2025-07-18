@@ -10,7 +10,7 @@ use ratatui::{
     style::Stylize,
     symbols::border,
     text::{Line, Text},
-    widgets::{Block, Paragraph, Tabs, Widget, Wrap},
+    widgets::{Block, Paragraph, Tabs, Widget},
 };
 use std::time::SystemTime;
 use tui_widgets::prompts::{Prompt, TextPrompt};
@@ -138,30 +138,34 @@ impl<'a> App<'a> {
 
         let active_servers = model
             .node
-            .active_servers
+            .servers
             .iter()
+            .filter(|s| s.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
         let pending_servers = model
             .node
-            .pending_servers
+            .servers
             .iter()
+            .filter(|s| !s.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
 
         let active_clients = model
             .node
-            .active_clients
+            .clients
             .iter()
+            .filter(|c| c.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
         let pending_clients = model
             .node
-            .pending_clients
+            .clients
             .iter()
+            .filter(|c| !c.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
@@ -215,7 +219,7 @@ impl<'a> App<'a> {
         // server jobs
         let server_jobs = model
             .node
-            .active_servers
+            .servers
             .iter()
             .flat_map(|server| {
                 if server.transfer_jobs.is_empty() {
@@ -304,7 +308,7 @@ impl<'a> App<'a> {
         // client jobs
         let client_jobs = model
             .node
-            .active_clients
+            .clients
             .iter()
             .flat_map(|client| {
                 if client.transfer_jobs.is_empty() {
