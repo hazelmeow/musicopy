@@ -19,3 +19,5 @@ interface ICoreProvider {
 }
 
 expect object CoreProvider : ICoreProvider;
+
+expect fun formatFloat(f: Float, decimals: Int): String

@@ -3,6 +3,7 @@ package zip.meows.musicopy
 import androidx.compose.ui.platform.ClipEntry
 import java.awt.Window
 import java.awt.datatransfer.StringSelection
+import java.text.DecimalFormat
 
 actual class PlatformContext private actual constructor() {
     actual val name: String = "Java ${System.getProperty("java.version")}"
@@ -18,3 +19,9 @@ actual class PlatformContext private actual constructor() {
 actual fun toClipEntry(string: String): ClipEntry = ClipEntry(StringSelection(string))
 
 actual object CoreProvider : ICoreProvider
+
+actual fun formatFloat(f: Float, decimals: Int): String {
+    val df = DecimalFormat()
+    df.maximumFractionDigits = decimals
+    return df.format(f)
+}
