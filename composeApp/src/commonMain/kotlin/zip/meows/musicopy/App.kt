@@ -37,6 +37,7 @@ import zip.meows.musicopy.ui.screens.HomeScreen
 import zip.meows.musicopy.ui.screens.PreTransfer
 import zip.meows.musicopy.ui.screens.PreTransferScreen
 import zip.meows.musicopy.ui.screens.Transfer
+import zip.meows.musicopy.ui.screens.TransferScreen
 import zip.meows.musicopy.ui.screens.Waiting
 import zip.meows.musicopy.ui.screens.WaitingScreen
 
@@ -189,6 +190,7 @@ fun App(
                                 onDownloadAll = {
                                     downloadDirectory?.let { downloadDirectory ->
                                         viewModel.instance.downloadAll(nodeId, downloadDirectory)
+                                        navController.navigate(Transfer(nodeId = nodeId))
                                     } ?: run {
                                         // TODO toast?
                                         println("download directory is null")
@@ -201,8 +203,21 @@ fun App(
                         }
                     }
                 }
-                composable<Transfer> {
-                    Text("transfer")
+                composable<Transfer> { backStackEntry ->
+                    val transfer: Transfer = backStackEntry.toRoute()
+                    val nodeId = transfer.nodeId
+                    model?.let { model ->
+                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
+
+                        client?.let { clientModel ->
+                            TransferScreen(
+                                clientModel = clientModel,
+                                onCancel = {
+                                    navController.popBackStack(Home, inclusive = false)
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

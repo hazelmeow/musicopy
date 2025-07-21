@@ -30,7 +30,10 @@ import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 import uniffi.musicopy.ServerModel
+import uniffi.musicopy.TransferJobProgressModel
+import zip.meows.musicopy.formatFloat
 import zip.meows.musicopy.shortenNodeId
+import zip.meows.musicopy.ui.screens.Transfer
 
 @Composable
 fun JobsWidget(
@@ -62,6 +65,12 @@ fun JobsWidget(
                     for (connection in activeServers) {
                         ActiveConnectionJob(connection)
                     }
+
+                    for (connection in activeServers) {
+                        if (connection.transferJobs.any { it.progress is TransferJobProgressModel.InProgress || it.progress is TransferJobProgressModel.Failed }) {
+                            ActiveTransferJob(connection)
+                        }
+                    }
                 }
             }
         }
@@ -88,6 +97,54 @@ private fun ActiveConnectionJob(connection: ServerModel) {
                     "Latency: ${connection.latencyMs}ms",
                     style = MaterialTheme.typography.bodyMedium
                 )
+            }
+        }
+    )
+}
+
+@Composable
+private fun ActiveTransferJob(connection: ServerModel) {
+    val count = connection.transferJobs.size
+    val countInProgress =
+        connection.transferJobs.filter { it.progress is TransferJobProgressModel.InProgress }.size
+    val countFailed =
+        connection.transferJobs.filter { it.progress is TransferJobProgressModel.Failed }.size
+
+    val countNotInProgress = count - countInProgress
+
+    val progressPercent = countNotInProgress.toFloat() / count.toFloat()
+    val progressPercentString = formatFloat(progressPercent * 100, 0)
+
+    Job(
+        labelLeft = {
+            Text(
+                "Transferring $count files to ${connection.name} ($progressPercentString%)",
+                style = MaterialTheme.typography.labelLarge
+            )
+        },
+        body = {
+            Column {
+                Text(
+                    "$countInProgress remaining",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                if (countFailed > 0) {
+                    Text(
+                        "$countInProgress failed",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
+                for (job in connection.transferJobs) {
+                    val progress = job.progress
+                    if (progress is TransferJobProgressModel.Failed) {
+                        Text(
+                            "${job.fileRoot}/${job.filePath} failed: ${progress.error}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
             }
         }
     )

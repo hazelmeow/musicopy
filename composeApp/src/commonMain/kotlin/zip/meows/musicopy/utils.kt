@@ -1,7 +1,10 @@
 package zip.meows.musicopy
 
 import kotlinx.datetime.Clock
+import uniffi.musicopy.ProgressCounterModel
 import uniffi.musicopy.ServerModel
+import uniffi.musicopy.TransferJobModel
+import uniffi.musicopy.TransferJobProgressModel
 
 fun shortenNodeId(nodeId: String): String {
     return "${nodeId.slice(0..<6)}...${nodeId.slice((nodeId.length - 6)..<(nodeId.length))}"
@@ -18,10 +21,24 @@ fun mockServerModel(): ServerModel {
     return ServerModel(
         name = "My Phone",
         nodeId = mockNodeId(),
-        connectedAt = Clock.System.now().epochSeconds.toULong(),
+        connectedAt = now(),
         accepted = true,
         connectionType = "direct",
         latencyMs = 42u,
         transferJobs = emptyList()
     )
+}
+
+fun mockTransferJobModel(): TransferJobModel {
+    return TransferJobModel(
+        startedAt = now(),
+        fileRoot = "root",
+        filePath = "a/b/c.mp3",
+        fileSize = 12345678u,
+        progress = TransferJobProgressModel.InProgress(bytes = ProgressCounterModel(2345678u))
+    )
+}
+
+internal fun now(): ULong {
+    return Clock.System.now().epochSeconds.toULong()
 }
