@@ -41,12 +41,27 @@ use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
+#[derive(Debug, uniffi::Object)]
+pub struct ProgressCounterModel(Arc<AtomicU64>);
+
+#[uniffi::export]
+impl ProgressCounterModel {
+    #[uniffi::constructor]
+    pub fn new(n: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(n)))
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 /// Model of progress for a transfer job.
 #[derive(Debug, uniffi::Enum)]
 pub enum TransferJobProgressModel {
     InProgress {
         /// Number of bytes written so far.
-        bytes: u64,
+        bytes: Arc<ProgressCounterModel>,
     },
     Finished {
         finished_at: u64,
@@ -354,7 +369,7 @@ impl Node {
                                 let progress = match &job.progress {
                                     TransferJobProgress::InProgress { written } => {
                                         TransferJobProgressModel::InProgress {
-                                            bytes: written.load(Ordering::Relaxed),
+                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
                                         }
                                     }
                                     TransferJobProgress::Finished { finished_at } => {
@@ -442,7 +457,7 @@ impl Node {
                                 let progress = match &job.progress {
                                     TransferJobProgress::InProgress { written } => {
                                         TransferJobProgressModel::InProgress {
-                                            bytes: written.load(Ordering::Relaxed),
+                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
                                         }
                                     }
                                     TransferJobProgress::Finished { finished_at } => {

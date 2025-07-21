@@ -258,12 +258,12 @@ impl<'a> App<'a> {
                 for job in &server.transfer_jobs {
                     if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
                         // calculate sizes in MB
-                        let progress_mb = *bytes as f64 / 1_000_000.0;
+                        let progress_mb = bytes.get() as f64 / 1_000_000.0;
                         let size_mb = job.file_size as f64 / 1_000_000.0;
 
                         // calculate percent
                         let progress_percent = if job.file_size > 0 {
-                            (*bytes as f64 / job.file_size as f64) * 100.0
+                            (bytes.get() as f64 / job.file_size as f64) * 100.0
                         } else {
                             0.0
                         };
@@ -271,9 +271,9 @@ impl<'a> App<'a> {
                         // calculate speed in MB/s
                         let elapsed = now - job.started_at;
                         let bytes_per_second = if elapsed > 0 {
-                            (*bytes as f64) / (elapsed as f64)
+                            (bytes.get() as f64) / (elapsed as f64)
                         } else {
-                            *bytes as f64
+                            bytes.get() as f64
                         };
                         let mbytes_per_second = bytes_per_second / 1_000_000.0;
 
@@ -347,12 +347,12 @@ impl<'a> App<'a> {
                 for job in &client.transfer_jobs {
                     if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
                         // calculate sizes in MB
-                        let progress_mb = *bytes as f64 / 1_000_000.0;
+                        let progress_mb = bytes.get() as f64 / 1_000_000.0;
                         let size_mb = job.file_size as f64 / 1_000_000.0;
 
                         // calculate percent
                         let progress_percent = if job.file_size > 0 {
-                            (*bytes as f64 / job.file_size as f64) * 100.0
+                            (bytes.get() as f64 / job.file_size as f64) * 100.0
                         } else {
                             0.0
                         };
@@ -360,9 +360,9 @@ impl<'a> App<'a> {
                         // calculate speed in MB/s
                         let elapsed = now - job.started_at;
                         let bytes_per_second = if elapsed > 0 {
-                            (*bytes as f64) / (elapsed as f64)
+                            (bytes.get() as f64) / (elapsed as f64)
                         } else {
-                            *bytes as f64
+                            bytes.get() as f64
                         };
                         let mbytes_per_second = bytes_per_second / 1_000_000.0;
 
