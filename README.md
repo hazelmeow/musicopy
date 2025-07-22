@@ -94,3 +94,11 @@ Connections:
 - Can we use Cargo features for desktop/mobile to not ship unused stuff to mobile?
     - Bindings are generated based on one file, so the interface should be the same... maybe just stubs if the desktop feature is disabled?
 - Or can we easily build two separate crates for desktop/mobile? Should desktop just be its own codebase?
+
+## Style guide
+
+For consistency:
+- Show file sizes in MB, not MiB
+- Show transfer speeds in MB/s
+- Show file sizes with one decimal point
+- Show percents with no decimal points
