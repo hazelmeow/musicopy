@@ -108,8 +108,9 @@ fun TransferScreen(
 
                                 LaunchedEffect(true) {
                                     while (isActive) {
-                                        targetProgress =
-                                            progress.bytes.get().toFloat() / job.fileSize.toFloat()
+                                        targetProgress = job.fileSize?.let {
+                                            progress.bytes.get().toFloat() / it.toFloat()
+                                        } ?: 0f
                                         delay(100)
                                     }
                                 }
@@ -148,13 +149,23 @@ internal fun formatJobName(job: TransferJobModel): String {
 }
 
 internal fun formatJobSubtitle(job: TransferJobModel): String {
-    val sizeMB = job.fileSize.toFloat() / 1_000_000f
-    val sizeMBString = formatFloat(sizeMB, 2)
-
     val progress = job.progress
     return when (progress) {
-        is TransferJobProgressModel.Finished -> "$sizeMBString MB"
-        is TransferJobProgressModel.InProgress -> ""
+        is TransferJobProgressModel.Finished -> {
+            job.fileSize?.let {
+                val totalMB = it.toFloat() / 1_000_000f
+                "${formatFloat(totalMB, 1)} MB"
+            } ?: ""
+        }
+
+        is TransferJobProgressModel.InProgress -> {
+            job.fileSize?.let {
+                val totalMB = it.toFloat() / 1_000_000f
+                val progressMB = progress.bytes.get().toFloat() / 1_000_000f
+                "${formatFloat(progressMB, 1)} MB/${formatFloat(totalMB, 1)} MB"
+            } ?: "Waiting..."
+        }
+
         is TransferJobProgressModel.Failed -> "Error: ${progress.error}"
     }
 }

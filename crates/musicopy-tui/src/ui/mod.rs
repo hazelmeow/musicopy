@@ -259,11 +259,11 @@ impl<'a> App<'a> {
                     if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
                         // calculate sizes in MB
                         let progress_mb = bytes.get() as f64 / 1_000_000.0;
-                        let size_mb = job.file_size as f64 / 1_000_000.0;
+                        let size_mb = job.file_size.unwrap_or(0) as f64 / 1_000_000.0;
 
                         // calculate percent
-                        let progress_percent = if job.file_size > 0 {
-                            (bytes.get() as f64 / job.file_size as f64) * 100.0
+                        let progress_percent = if job.file_size.unwrap_or(0) > 0 {
+                            (bytes.get() as f64 / job.file_size.unwrap_or(0) as f64) * 100.0
                         } else {
                             0.0
                         };
@@ -348,11 +348,11 @@ impl<'a> App<'a> {
                     if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
                         // calculate sizes in MB
                         let progress_mb = bytes.get() as f64 / 1_000_000.0;
-                        let size_mb = job.file_size as f64 / 1_000_000.0;
+                        let size_mb = job.file_size.unwrap_or(0) as f64 / 1_000_000.0;
 
                         // calculate percent
-                        let progress_percent = if job.file_size > 0 {
-                            (bytes.get() as f64 / job.file_size as f64) * 100.0
+                        let progress_percent = if job.file_size.unwrap_or(0) > 0 {
+                            (bytes.get() as f64 / job.file_size.unwrap_or(0) as f64) * 100.0
                         } else {
                             0.0
                         };

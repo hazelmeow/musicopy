@@ -77,7 +77,7 @@ pub struct TransferJobModel {
     pub started_at: u64,
     pub file_root: String,
     pub file_path: String,
-    pub file_size: u64,
+    pub file_size: Option<u64>,
     pub progress: TransferJobProgressModel,
 }
 
@@ -609,7 +609,7 @@ struct TransferJob {
     started_at: u64,
     file_root: String,
     file_path: String,
-    file_size: u64, // TODO: maybe optional for client end, or split into two structs
+    file_size: Option<u64>,
     progress: TransferJobProgress,
 }
 
@@ -853,7 +853,7 @@ impl Server {
                                     started_at: unix_epoch_now_secs(),
                                     file_root: download_req.root.clone(),
                                     file_path: download_req.path.clone(),
-                                    file_size,
+                                    file_size: Some(file_size),
                                     progress: TransferJobProgress::InProgress { written: written.clone() },
                                 });
                             }
@@ -1098,12 +1098,30 @@ impl Client {
                                 continue;
                             };
 
+                            let index_jobs = index.clone().into_iter().map(|item| {
+                                let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+
+                                let written = Arc::new(AtomicU64::new(0));
+
+                                 // insert job
+                                {
+                                    self.jobs.insert(job_id, TransferJob {
+                                        started_at: unix_epoch_now_secs(),
+                                        file_root: item.root.clone(),
+                                        file_path: item.path.clone(),
+                                        file_size: None,
+                                        progress: TransferJobProgress::InProgress { written: written.clone() },
+                                    });
+                                }
+
+                                (job_id, written, item)
+                            }).collect::<Vec<_>>();
+
                             // TODO: tune concurrency level
-                            let mut buffered = futures::stream::iter(index)
-                                .map(|item| {
+                            let mut buffered = futures::stream::iter(index_jobs)
+                                .map(|(job_id, written, item): (u64, Arc<AtomicU64>, IndexItem)| {
                                     let download_directory = download_directory.clone();
                                     let connection = self.connection.clone();
-                                    let next_job_id = self.next_job_id.clone();
                                     let jobs = self.jobs.clone();
                                     async move {
                                         log::debug!("downloading file: {}/{}", item.root, item.path);
@@ -1124,7 +1142,7 @@ impl Client {
                                         }
 
                                         // open file for writing
-                                        let mut file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
+                                        let file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
                                             .context("failed to open file")?;
 
                                         // open a bidirectional stream
@@ -1148,31 +1166,21 @@ impl Client {
                                         // read file length
                                         let file_len = recv.read_u32().await?;
 
-                                        // insert job
-                                        // TODO: would be nice to create the job earlier, but we don't have the file size yet
-                                        let job_id = next_job_id.fetch_add(1, Ordering::Relaxed);
-                                        let written = Arc::new(AtomicU64::new(0));
-                                        {
-                                            jobs.insert(job_id, TransferJob {
-                                                started_at: unix_epoch_now_secs(),
-                                                file_root: item.root.clone(),
-                                                file_path: item.path.clone(),
-                                                file_size: file_len as u64,
-                                                progress: TransferJobProgress::InProgress { written: written.clone() },
-                                            });
-                                        }
+                                        // set file size in job
+                                        jobs.alter(&job_id, |_, mut job| {
+                                            job.file_size = Some(file_len as u64);
+                                            job
+                                        });
 
                                         // copy from stream to file
                                         let mut file_progress = WriteProgress::new(written.clone(), file);
                                         tokio::io::copy(&mut recv.take(file_len as u64), &mut file_progress).await?;
 
                                         // mark job as finished
-                                        {
-                                            jobs.alter(&job_id, |_, mut job| {
-                                                job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
-                                                job
-                                            });
-                                        }
+                                        jobs.alter(&job_id, |_, mut job| {
+                                            job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
+                                            job
+                                        });
 
                                         log::debug!("saved file to {:?}", file_path);
 
