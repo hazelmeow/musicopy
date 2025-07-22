@@ -826,93 +826,99 @@ impl Server {
                 accept_result = self.connection.accept_bi() => {
                     match accept_result {
                         Ok((mut send, mut recv)) => {
-                            // receive download request
-                            let download_req_len = recv.read_u32().await?;
-                            let mut download_req_buf = vec![0; download_req_len as usize];
-                            recv
-                                .read_exact(&mut download_req_buf)
-                                .await
-                                .context("failed to read download request")?;
-                            let download_req: DownloadRequest =
-                                postcard::from_bytes(&download_req_buf).context("failed to deserialize download request")?;
-
-                            log::info!("received download request for {}/{}", download_req.root, download_req.path);
-
-                            // query database for file
-                            let file = {
-                                let db = self.db.lock().unwrap();
-                                db.get_file_by_node_root_path(
-                                    download_req.node_id,
-                                    &download_req.root,
-                                    &download_req.path,
-                                )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
-                            };
-
-                            // check local file exists
-                            let file_path = PathBuf::from(&file.local_path);
-                            if !file_path.exists() {
-                                // TODO: create a job with failed progress
-                                anyhow::bail!("file at local_path does not exist: {}", file.local_path);
-                            }
-
-                            // get file size
-                            let metadata = file_path.metadata().context("failed to get file metadata")?;
-                            let file_size = metadata.len();
-
-                            let written = Arc::new(AtomicU64::new(0));
-
-                            // insert job
+                            let db = self.db.clone();
                             let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
-                            {
-                                self.jobs.insert(job_id, TransferJob {
-                                    started_at: unix_epoch_now_secs(),
-                                    file_root: download_req.root.clone(),
-                                    file_path: download_req.path.clone(),
-                                    file_size: Some(file_size),
-                                    progress: TransferJobProgress::InProgress { written: written.clone() },
-                                });
-                            }
+                            let jobs = self.jobs.clone();
+                            tokio::spawn(async move {
+                                // receive download request
+                                let download_req_len = recv.read_u32().await?;
+                                let mut download_req_buf = vec![0; download_req_len as usize];
+                                recv
+                                    .read_exact(&mut download_req_buf)
+                                    .await
+                                    .context("failed to read download request")?;
+                                let download_req: DownloadRequest =
+                                    postcard::from_bytes(&download_req_buf).context("failed to deserialize download request")?;
 
-                            // send download response with metadata
-                            let download_response = DownloadResponse {
-                                file_size,
-                            };
-                            let download_response_buf = postcard::to_stdvec(&download_response)
-                                .context("failed to serialize download response")?;
-                            send.write_u32(download_response_buf.len() as u32)
-                                .await
-                                .context("failed to write download response length")?;
-                            send.write_all(&download_response_buf)
-                                .await
-                                .context("failed to write download response")?;
+                                log::info!("received download request for {}/{}", download_req.root, download_req.path);
 
-                            // wait for download start request
-                            let download_start_req_len = recv.read_u32().await?;
-                            let mut download_start_req_buf = vec![0; download_start_req_len as usize];
-                            recv
-                                .read_exact(&mut download_start_req_buf)
-                                .await
-                                .context("failed to read download start request")?;
-                            let _download_start_req: DownloadStartRequest =
-                                postcard::from_bytes(&download_start_req_buf).context("failed to deserialize download start request")?;
+                                // query database for file
+                                let file = {
+                                    let db = db.lock().unwrap();
+                                    db.get_file_by_node_root_path(
+                                        download_req.node_id,
+                                        &download_req.root,
+                                        &download_req.path,
+                                    )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
+                                };
 
-                            // read file to buffer
-                            // TODO: stream instead of reading into memory?
-                            let file_content = tokio::fs::read(file_path).await?;
+                                // check local file exists
+                                let file_path = PathBuf::from(&file.local_path);
+                                if !file_path.exists() {
+                                    // TODO: create a job with failed progress
+                                    anyhow::bail!("file at local_path does not exist: {}", file.local_path);
+                                }
 
-                            // TODO: handle errors during send
-                            let mut send_progress = WriteProgress::new(written.clone(), send);
-                            send_progress.write_all(&file_content).await?;
+                                // get file size
+                                let metadata = file_path.metadata().context("failed to get file metadata")?;
+                                let file_size = metadata.len();
 
-                            // mark job as finished
-                            {
-                                self.jobs.alter(&job_id, |_, mut job| {
-                                    job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
-                                    job
-                                });
-                            }
+                                let written = Arc::new(AtomicU64::new(0));
 
-                            log::info!("finished sending file content for {}/{}", download_req.root, download_req.path);
+                                // insert job
+                                {
+                                    jobs.insert(job_id, TransferJob {
+                                        started_at: unix_epoch_now_secs(),
+                                        file_root: download_req.root.clone(),
+                                        file_path: download_req.path.clone(),
+                                        file_size: Some(file_size),
+                                        progress: TransferJobProgress::InProgress { written: written.clone() },
+                                    });
+                                }
+
+                                // send download response with metadata
+                                let download_response = DownloadResponse {
+                                    file_size,
+                                };
+                                let download_response_buf = postcard::to_stdvec(&download_response)
+                                    .context("failed to serialize download response")?;
+                                send.write_u32(download_response_buf.len() as u32)
+                                    .await
+                                    .context("failed to write download response length")?;
+                                send.write_all(&download_response_buf)
+                                    .await
+                                    .context("failed to write download response")?;
+
+                                // wait for download start request
+                                let download_start_req_len = recv.read_u32().await?;
+                                let mut download_start_req_buf = vec![0; download_start_req_len as usize];
+                                recv
+                                    .read_exact(&mut download_start_req_buf)
+                                    .await
+                                    .context("failed to read download start request")?;
+                                let _download_start_req: DownloadStartRequest =
+                                    postcard::from_bytes(&download_start_req_buf).context("failed to deserialize download start request")?;
+
+                                // read file to buffer
+                                // TODO: stream instead of reading into memory?
+                                let file_content = tokio::fs::read(file_path).await?;
+
+                                // TODO: handle errors during send
+                                let mut send_progress = WriteProgress::new(written.clone(), send);
+                                send_progress.write_all(&file_content).await?;
+
+                                // mark job as finished
+                                {
+                                    jobs.alter(&job_id, |_, mut job| {
+                                        job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
+                                        job
+                                    });
+                                }
+
+                                log::info!("finished sending file content for {}/{}", download_req.root, download_req.path);
+
+                                Ok::<(), anyhow::Error>(())
+                            });
                         }
 
                         Err(e) => {
