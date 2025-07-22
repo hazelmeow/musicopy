@@ -597,6 +597,21 @@ struct DownloadRequest {
     path: String,
 }
 
+/// A message sent by the client in a file transfer stream to signal the server
+/// to start sending the file content.
+///
+/// Doesn't currently contain anything but needs to be at least 1 byte.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadStartRequest {
+    dummy: [u8; 1],
+}
+
+/// A message sent by the server in a file transfer stream with file metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadResponse {
+    file_size: u64,
+}
+
 #[derive(Debug)]
 enum ServerCommand {
     Accept,
@@ -833,11 +848,10 @@ impl Server {
                                 )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
                             };
 
-                            let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
-
-                            // send file content
+                            // check local file exists
                             let file_path = PathBuf::from(&file.local_path);
                             if !file_path.exists() {
+                                // TODO: create a job with failed progress
                                 anyhow::bail!("file at local_path does not exist: {}", file.local_path);
                             }
 
@@ -848,6 +862,7 @@ impl Server {
                             let written = Arc::new(AtomicU64::new(0));
 
                             // insert job
+                            let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
                             {
                                 self.jobs.insert(job_id, TransferJob {
                                     started_at: unix_epoch_now_secs(),
@@ -858,12 +873,32 @@ impl Server {
                                 });
                             }
 
+                            // send download response with metadata
+                            let download_response = DownloadResponse {
+                                file_size,
+                            };
+                            let download_response_buf = postcard::to_stdvec(&download_response)
+                                .context("failed to serialize download response")?;
+                            send.write_u32(download_response_buf.len() as u32)
+                                .await
+                                .context("failed to write download response length")?;
+                            send.write_all(&download_response_buf)
+                                .await
+                                .context("failed to write download response")?;
+
+                            // wait for download start request
+                            let download_start_req_len = recv.read_u32().await?;
+                            let mut download_start_req_buf = vec![0; download_start_req_len as usize];
+                            recv
+                                .read_exact(&mut download_start_req_buf)
+                                .await
+                                .context("failed to read download start request")?;
+                            let _download_start_req: DownloadStartRequest =
+                                postcard::from_bytes(&download_start_req_buf).context("failed to deserialize download start request")?;
+
                             // read file to buffer
                             // TODO: stream instead of reading into memory?
                             let file_content = tokio::fs::read(file_path).await?;
-
-                            // write file size to stream
-                            send.write_u32(file_content.len() as u32).await?;
 
                             // TODO: handle errors during send
                             let mut send_progress = WriteProgress::new(written.clone(), send);
@@ -1098,6 +1133,7 @@ impl Client {
                                 continue;
                             };
 
+                            // create a job for each item in the index
                             let index_jobs = index.clone().into_iter().map(|item| {
                                 let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
 
@@ -1117,13 +1153,76 @@ impl Client {
                                 (job_id, written, item)
                             }).collect::<Vec<_>>();
 
+                            // open a stream for each job and send the download request
+                            // this will be done for all jobs concurrently
+                            let job_streams = futures::stream::iter(index_jobs).map(|(job_id, written, item)| {
+                                let connection = self.connection.clone();
+                                let jobs = self.jobs.clone();
+                                async move {
+                                    // open a bidirectional stream
+                                    let (mut send, mut recv) = connection.open_bi().await?;
+
+                                    // send download request
+                                    let download_request = DownloadRequest {
+                                        node_id: item.node_id,
+                                        root: item.root.clone(),
+                                        path: item.path.clone()
+                                    };
+                                    let download_request_buf = postcard::to_stdvec(&download_request)
+                                        .context("failed to serialize download request")?;
+                                    send.write_u32(download_request_buf.len() as u32)
+                                        .await
+                                        .context("failed to write download request length")?;
+                                    send.write_all(&download_request_buf)
+                                        .await
+                                        .context("failed to write download request")?;
+
+                                    // receive download response with metadata
+                                    let download_response_len = recv.read_u32().await?;
+                                    let mut download_response_buf = vec![0; download_response_len as usize];
+                                    recv
+                                        .read_exact(&mut download_response_buf)
+                                        .await
+                                        .context("failed to read download response")?;
+                                    let download_response: DownloadResponse =
+                                        postcard::from_bytes(&download_response_buf).context("failed to deserialize download response")?;
+
+                                    // set file size in job
+                                    jobs.alter(&job_id, |_, mut job| {
+                                        job.file_size = Some(download_response.file_size);
+                                        job
+                                    });
+
+                                    Ok((job_id, written, item, send, recv, download_response.file_size))
+                                }
+                            }).buffer_unordered(usize::MAX);
+
+                            // send download start requests and write files to disk
+                            // this is only done for a few jobs at a time
                             // TODO: tune concurrency level
-                            let mut buffered = futures::stream::iter(index_jobs)
-                                .map(|(job_id, written, item): (u64, Arc<AtomicU64>, IndexItem)| {
+                            let mut buffered = job_streams
+                                .map(|item| {
                                     let download_directory = download_directory.clone();
-                                    let connection = self.connection.clone();
                                     let jobs = self.jobs.clone();
                                     async move {
+                                        let (job_id, written, item, mut send, recv, file_size) = match item {
+                                            Ok(item) => item,
+                                            Err(e) => {
+                                                return Err(e)
+                                            }
+                                        };
+
+                                        // send download start request
+                                        let download_start_request = DownloadStartRequest { dummy: [0; 1] };
+                                        let download_start_request_buf = postcard::to_stdvec(&download_start_request)
+                                            .context("failed to serialize download start request")?;
+                                        send.write_u32(download_start_request_buf.len() as u32)
+                                            .await
+                                            .context("failed to write download start request length")?;
+                                        send.write_all(&download_start_request_buf)
+                                            .await
+                                            .context("failed to write download start request")?;
+
                                         log::debug!("downloading file: {}/{}", item.root, item.path);
 
                                         // build file path
@@ -1145,36 +1244,9 @@ impl Client {
                                         let file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
                                             .context("failed to open file")?;
 
-                                        // open a bidirectional stream
-                                        let (mut send, mut recv) = connection.open_bi().await?;
-
-                                        // send download request
-                                        let download_request = DownloadRequest {
-                                            node_id: item.node_id,
-                                            root: item.root.clone(),
-                                            path: item.path.clone()
-                                        };
-                                        let download_request_buf = postcard::to_stdvec(&download_request)
-                                            .context("failed to serialize download request")?;
-                                        send.write_u32(download_request_buf.len() as u32)
-                                            .await
-                                            .context("failed to write download request length")?;
-                                        send.write_all(&download_request_buf)
-                                            .await
-                                            .context("failed to write download request")?;
-
-                                        // read file length
-                                        let file_len = recv.read_u32().await?;
-
-                                        // set file size in job
-                                        jobs.alter(&job_id, |_, mut job| {
-                                            job.file_size = Some(file_len as u64);
-                                            job
-                                        });
-
                                         // copy from stream to file
                                         let mut file_progress = WriteProgress::new(written.clone(), file);
-                                        tokio::io::copy(&mut recv.take(file_len as u64), &mut file_progress).await?;
+                                        tokio::io::copy(&mut recv.take(file_size), &mut file_progress).await?;
 
                                         // mark job as finished
                                         jobs.alter(&job_id, |_, mut job| {
