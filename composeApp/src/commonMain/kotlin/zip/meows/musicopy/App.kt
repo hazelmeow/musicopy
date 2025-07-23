@@ -82,141 +82,138 @@ fun App(
     }
 
     MaterialTheme {
-        Scaffold() { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = Home,
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(innerPadding),
-                enterTransition = {
-                    slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                        animationSpec = tween(700)
-                    )
-                },
-                exitTransition = {
-                    slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                        animationSpec = tween(700)
-                    )
-                },
-                popEnterTransition = {
-                    slideIntoContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                        animationSpec = tween(700)
-                    )
-                },
-                popExitTransition = {
-                    slideOutOfContainer(
-                        towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                        animationSpec = tween(700)
+        NavHost(
+            navController = navController,
+            startDestination = Home,
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Left,
+                    animationSpec = tween(700)
+                )
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Left,
+                    animationSpec = tween(700)
+                )
+            },
+            popEnterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Right,
+                    animationSpec = tween(700)
+                )
+            },
+            popExitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Right,
+                    animationSpec = tween(700)
+                )
+            }
+        ) {
+            composable<Home> {
+                // TODO: make this better...
+                model?.let {
+                    HomeScreen(
+                        model = it,
+                        onPickDownloadDirectory = {
+                            scope.launch {
+                                directoryPicker.pickDownloadDirectory()
+                            }
+                        },
+                        onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
+                        onConnectManuallyButtonClicked = {
+                            navController.navigate(
+                                ConnectManually
+                            )
+                        }
                     )
                 }
-            ) {
-                composable<Home> {
-                    // TODO: make this better...
-                    model?.let {
-                        HomeScreen(
-                            model = it,
-                            onPickDownloadDirectory = {
-                                scope.launch {
-                                    directoryPicker.pickDownloadDirectory()
+            }
+            composable<ConnectQR> {
+                model?.let {
+                    ConnectQRScreen(
+                        isConnecting = isConnecting,
+                        onSubmit = onConnect,
+                        onCancel = {
+                            navController.popBackStack(Home, inclusive = false)
+                        }
+                    )
+                }
+            }
+            composable<ConnectManually> {
+                model?.let {
+                    ConnectManuallyScreen(
+                        isConnecting = isConnecting,
+                        onSubmit = onConnect,
+                        onCancel = {
+                            navController.popBackStack(Home, inclusive = false)
+                        }
+                    )
+                }
+            }
+            composable<Waiting> { backStackEntry ->
+                val waiting: Waiting = backStackEntry.toRoute()
+                val nodeId = waiting.nodeId
+                model?.let { model ->
+                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+
+                    if (client?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
+                        navController.navigate(PreTransfer(nodeId = nodeId))
+                    }
+
+                    client?.let { clientModel ->
+                        WaitingScreen(
+                            clientModel = clientModel,
+                            onCancel = {
+                                navController.popBackStack(Home, inclusive = false)
+                            }
+                        )
+                    }
+                }
+            }
+            composable<PreTransfer> { backStackEntry ->
+                val preTransfer: PreTransfer = backStackEntry.toRoute()
+                val nodeId = preTransfer.nodeId
+                model?.let { model ->
+                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+
+                    val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                        null
+                    )
+
+                    client?.let { clientModel ->
+                        PreTransferScreen(
+                            clientModel = clientModel,
+                            onDownloadAll = {
+                                downloadDirectory?.let { downloadDirectory ->
+                                    viewModel.instance.downloadAll(nodeId, downloadDirectory)
+                                    navController.navigate(Transfer(nodeId = nodeId))
+                                } ?: run {
+                                    // TODO toast?
+                                    println("download directory is null")
                                 }
                             },
-                            onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
-                            onConnectManuallyButtonClicked = {
-                                navController.navigate(
-                                    ConnectManually
-                                )
-                            }
-                        )
-                    }
-                }
-                composable<ConnectQR> {
-                    model?.let {
-                        ConnectQRScreen(
-                            isConnecting = isConnecting,
-                            onSubmit = onConnect,
                             onCancel = {
                                 navController.popBackStack(Home, inclusive = false)
                             }
                         )
                     }
                 }
-                composable<ConnectManually> {
-                    model?.let {
-                        ConnectManuallyScreen(
-                            isConnecting = isConnecting,
-                            onSubmit = onConnect,
+            }
+            composable<Transfer> { backStackEntry ->
+                val transfer: Transfer = backStackEntry.toRoute()
+                val nodeId = transfer.nodeId
+                model?.let { model ->
+                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+
+                    client?.let { clientModel ->
+                        TransferScreen(
+                            clientModel = clientModel,
                             onCancel = {
                                 navController.popBackStack(Home, inclusive = false)
                             }
                         )
-                    }
-                }
-                composable<Waiting> { backStackEntry ->
-                    val waiting: Waiting = backStackEntry.toRoute()
-                    val nodeId = waiting.nodeId
-                    model?.let { model ->
-                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
-
-                        if (client?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
-                            navController.navigate(PreTransfer(nodeId = nodeId))
-                        }
-
-                        client?.let { clientModel ->
-                            WaitingScreen(
-                                clientModel = clientModel,
-                                onCancel = {
-                                    navController.popBackStack(Home, inclusive = false)
-                                }
-                            )
-                        }
-                    }
-                }
-                composable<PreTransfer> { backStackEntry ->
-                    val preTransfer: PreTransfer = backStackEntry.toRoute()
-                    val nodeId = preTransfer.nodeId
-                    model?.let { model ->
-                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
-
-                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
-                            null
-                        )
-
-                        client?.let { clientModel ->
-                            PreTransferScreen(
-                                clientModel = clientModel,
-                                onDownloadAll = {
-                                    downloadDirectory?.let { downloadDirectory ->
-                                        viewModel.instance.downloadAll(nodeId, downloadDirectory)
-                                        navController.navigate(Transfer(nodeId = nodeId))
-                                    } ?: run {
-                                        // TODO toast?
-                                        println("download directory is null")
-                                    }
-                                },
-                                onCancel = {
-                                    navController.popBackStack(Home, inclusive = false)
-                                }
-                            )
-                        }
-                    }
-                }
-                composable<Transfer> { backStackEntry ->
-                    val transfer: Transfer = backStackEntry.toRoute()
-                    val nodeId = transfer.nodeId
-                    model?.let { model ->
-                        val client = model.node.clients.find { x -> x.nodeId == nodeId }
-
-                        client?.let { clientModel ->
-                            TransferScreen(
-                                clientModel = clientModel,
-                                onCancel = {
-                                    navController.popBackStack(Home, inclusive = false)
-                                }
-                            )
-                        }
                     }
                 }
             }

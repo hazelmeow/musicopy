@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,41 +39,42 @@ fun ConnectManuallyScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        SectionCard(
-            title = "Connect manually",
-            body = {
-                Text("Enter the node id etc etc etc.")
+    Scaffold() { innerPadding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            SectionCard(
+                title = "Connect manually",
+                body = {
+                    Text("Enter the node id etc etc etc.")
 
-                Text("TODO: Desktop install link")
+                    Text("TODO: Desktop install link")
 
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    OutlinedTextField(
-                        value = value,
-                        onValueChange = { value = it },
-                        label = {
-                            Text("Node ID")
-                        },
-                        maxLines = 1,
-                        modifier = Modifier.fillMaxWidth(),
-                        isError = isError,
-                        supportingText = supportingText
-                    )
-                }
-            },
-            onCancel = onCancel,
-            onAction = { onSubmit(value) },
-            actionLabel = "Connect",
-            actionEnabled = isValid,
-            actionLoading = isConnecting
-        )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        OutlinedTextField(
+                            value = value,
+                            onValueChange = { value = it },
+                            label = {
+                                Text("Node ID")
+                            },
+                            maxLines = 1,
+                            modifier = Modifier.fillMaxWidth(),
+                            isError = isError,
+                            supportingText = supportingText
+                        )
+                    }
+                },
+                onCancel = onCancel,
+                onAction = { onSubmit(value) },
+                actionLabel = "Connect",
+                actionEnabled = isValid,
+                actionLoading = isConnecting
+            )
+        }
     }
 }
 

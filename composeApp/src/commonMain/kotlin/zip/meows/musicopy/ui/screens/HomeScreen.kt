@@ -14,6 +14,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -36,64 +37,66 @@ fun HomeScreen(
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(null)
-        Button(
-            onClick = onPickDownloadDirectory
-        ) {
-            Text("choose directory")
-        }
-        Text("download directory = ${downloadDirectory}")
-
-        val sheetState = rememberNodeStatusSheetState()
-        Button(onClick = { sheetState.peek() }) {
-            Text("Show Node Info")
-        }
-
+    Scaffold() { innerPadding ->
         Column(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Card(modifier = Modifier.height(50.dp), shape = CircleShape) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        "Connect",
-                        modifier = Modifier.padding(start = 12.dp),
-                        style = MaterialTheme.typography.titleLarge
-                    )
+            val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(null)
+            Button(
+                onClick = onPickDownloadDirectory
+            ) {
+                Text("choose directory")
+            }
+            Text("download directory = ${downloadDirectory}")
 
-                    Box(modifier = Modifier.weight(1f))
+            val sheetState = rememberNodeStatusSheetState()
+            Button(onClick = { sheetState.peek() }) {
+                Text("Show Node Info")
+            }
 
-                    Button(onClick = onConnectQRButtonClicked) {
-                        Icon(
-                            painter = painterResource(Res.drawable.content_copy_24px),
-                            contentDescription = "QR code icon"
-                        )
-                        Text("QR")
-                    }
-
-                    Button(
-                        onClick = onConnectManuallyButtonClicked,
-                        shape = RoundedCornerShape(46.dp)
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Card(modifier = Modifier.height(50.dp), shape = CircleShape) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            painter = painterResource(Res.drawable.content_copy_24px),
-                            contentDescription = "QR code icon"
+                        Text(
+                            "Connect",
+                            modifier = Modifier.padding(start = 12.dp),
+                            style = MaterialTheme.typography.titleLarge
                         )
-                        Text("Manual")
+
+                        Box(modifier = Modifier.weight(1f))
+
+                        Button(onClick = onConnectQRButtonClicked) {
+                            Icon(
+                                painter = painterResource(Res.drawable.content_copy_24px),
+                                contentDescription = "QR code icon"
+                            )
+                            Text("QR")
+                        }
+
+                        Button(
+                            onClick = onConnectManuallyButtonClicked,
+                            shape = RoundedCornerShape(46.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(Res.drawable.content_copy_24px),
+                                contentDescription = "QR code icon"
+                            )
+                            Text("Manual")
+                        }
                     }
                 }
             }
-        }
 
-        NodeStatusSheet(sheetState, model)
+            NodeStatusSheet(sheetState, model)
+        }
     }
 }
 

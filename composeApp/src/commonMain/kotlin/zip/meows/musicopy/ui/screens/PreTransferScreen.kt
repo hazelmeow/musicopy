@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,58 +28,60 @@ fun PreTransferScreen(
     onDownloadAll: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-    ) {
-        SectionCard(
-            title = "Transfer",
-            body = {
+    Scaffold() { innerPadding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+        ) {
+            SectionCard(
+                title = "Transfer",
+                body = {
 
-                Text("choose what to download")
+                    Text("choose what to download")
 
-                clientModel.index?.let { index ->
-                    Text("received index of ${index.size} items")
-                } ?: run {
-                    Text("no index yet")
+                    clientModel.index?.let { index ->
+                        Text("received index of ${index.size} items")
+                    } ?: run {
+                        Text("no index yet")
+                    }
+                },
+                onCancel = onCancel,
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                onClick = onDownloadAll,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Download everything", style = MaterialTheme.typography.titleMedium)
+
+                    Icon(
+                        painter = painterResource(Res.drawable.chevron_forward_24px),
+                        contentDescription = null,
+                    )
                 }
-            },
-            onCancel = onCancel,
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            onClick = onDownloadAll,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Download everything", style = MaterialTheme.typography.titleMedium)
-
-                Icon(
-                    painter = painterResource(Res.drawable.chevron_forward_24px),
-                    contentDescription = null,
-                )
             }
-        }
 
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            onClick = { print("meow") }
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                onClick = { print("meow") }
             ) {
-                Text("Choose what to download", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Choose what to download", style = MaterialTheme.typography.titleMedium)
 
-                Icon(
-                    painter = painterResource(Res.drawable.chevron_forward_24px),
-                    contentDescription = null
-                )
+                    Icon(
+                        painter = painterResource(Res.drawable.chevron_forward_24px),
+                        contentDescription = null
+                    )
+                }
             }
         }
     }
