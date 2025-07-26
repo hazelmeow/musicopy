@@ -238,6 +238,15 @@ impl<'a> App<'a> {
                 self.core.add_library_root(name, path)?;
             }
 
+            "removelibrary" => {
+                if parts.len() < 2 {
+                    anyhow::bail!("usage: removelibrary <name>");
+                }
+
+                let name = parts[1].to_string();
+                self.core.remove_library_root(name)?;
+            }
+
             "a" | "accept" => {
                 app_log!("accepting pending servers");
 
