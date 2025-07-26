@@ -17,9 +17,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun ConnectManuallyScreen(
+    onShowNodeStatus: () -> Unit,
+
     isConnecting: Boolean,
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
@@ -39,7 +42,15 @@ fun ConnectManuallyScreen(
         }
     }
 
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(
+                title = "Connect manually",
+                onShowNodeStatus = onShowNodeStatus,
+                onBack = onCancel
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             verticalArrangement = Arrangement.Center,
@@ -86,5 +97,6 @@ fun ConnectManuallyScreenSandbox() {
         isConnecting = isConnecting,
         onSubmit = { isConnecting = true },
         onCancel = { isConnecting = false },
+        onShowNodeStatus = {}
     )
 }

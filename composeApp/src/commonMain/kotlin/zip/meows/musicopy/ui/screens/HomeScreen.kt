@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -25,19 +26,22 @@ import androidx.compose.ui.unit.dp
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.Model
 import zip.meows.musicopy.AppSettings
-import zip.meows.musicopy.ui.NodeStatusSheet
-import zip.meows.musicopy.ui.rememberNodeStatusSheetState
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun HomeScreen(
-    model: Model,
+    onShowNodeStatus: () -> Unit,
+
     onPickDownloadDirectory: () -> Unit,
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
 ) {
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(title = "Musicopy", onShowNodeStatus = onShowNodeStatus)
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -50,8 +54,7 @@ fun HomeScreen(
             }
             Text("download directory = ${downloadDirectory}")
 
-            val sheetState = rememberNodeStatusSheetState()
-            Button(onClick = { sheetState.peek() }) {
+            Button(onClick = onShowNodeStatus) {
                 Text("Show Node Info")
             }
 
@@ -94,8 +97,6 @@ fun HomeScreen(
                     }
                 }
             }
-
-            NodeStatusSheet(sheetState, model)
         }
     }
 }

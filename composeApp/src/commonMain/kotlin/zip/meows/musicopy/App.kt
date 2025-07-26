@@ -28,6 +28,8 @@ import androidx.navigation.toRoute
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.musicopy.CoreException
+import zip.meows.musicopy.ui.NodeStatusSheet
+import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 import zip.meows.musicopy.ui.screens.ConnectManually
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
 import zip.meows.musicopy.ui.screens.ConnectQR
@@ -81,11 +83,16 @@ fun App(
         Unit
     }
 
+    val nodeStatusSheetState = rememberNodeStatusSheetState()
+    NodeStatusSheet(nodeStatusSheetState, model)
+    val onShowNodeStatus = { nodeStatusSheetState.peek() }
+
     MaterialTheme {
         NavHost(
             navController = navController,
             startDestination = Home,
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            // TODO
+            // modifier = Modifier.verticalScroll(rememberScrollState()),
             enterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Left,
@@ -115,7 +122,8 @@ fun App(
                 // TODO: make this better...
                 model?.let {
                     HomeScreen(
-                        model = it,
+                        onShowNodeStatus = onShowNodeStatus,
+
                         onPickDownloadDirectory = {
                             scope.launch {
                                 directoryPicker.pickDownloadDirectory()
@@ -133,17 +141,21 @@ fun App(
             composable<ConnectQR> {
                 model?.let {
                     ConnectQRScreen(
+                        onShowNodeStatus = onShowNodeStatus,
+
                         isConnecting = isConnecting,
                         onSubmit = onConnect,
                         onCancel = {
                             navController.popBackStack(Home, inclusive = false)
-                        }
+                        },
                     )
                 }
             }
             composable<ConnectManually> {
                 model?.let {
                     ConnectManuallyScreen(
+                        onShowNodeStatus = onShowNodeStatus,
+
                         isConnecting = isConnecting,
                         onSubmit = onConnect,
                         onCancel = {
@@ -164,6 +176,8 @@ fun App(
 
                     client?.let { clientModel ->
                         WaitingScreen(
+                            onShowNodeStatus = onShowNodeStatus,
+
                             clientModel = clientModel,
                             onCancel = {
                                 navController.popBackStack(Home, inclusive = false)
@@ -184,6 +198,8 @@ fun App(
 
                     client?.let { clientModel ->
                         PreTransferScreen(
+                            onShowNodeStatus = onShowNodeStatus,
+
                             clientModel = clientModel,
                             onDownloadAll = {
                                 downloadDirectory?.let { downloadDirectory ->
@@ -209,6 +225,8 @@ fun App(
 
                     client?.let { clientModel ->
                         TransferScreen(
+                            onShowNodeStatus = onShowNodeStatus,
+
                             clientModel = clientModel,
                             onCancel = {
                                 navController.popBackStack(Home, inclusive = false)

@@ -37,13 +37,24 @@ import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
 import zip.meows.musicopy.formatFloat
 import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun TransferScreen(
+    onShowNodeStatus: () -> Unit,
+
     clientModel: ClientModel,
     onCancel: () -> Unit,
 ) {
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(
+                title = "Transferring ${clientModel.transferJobs.size} files",
+                onShowNodeStatus = onShowNodeStatus,
+                onBack = onCancel
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),

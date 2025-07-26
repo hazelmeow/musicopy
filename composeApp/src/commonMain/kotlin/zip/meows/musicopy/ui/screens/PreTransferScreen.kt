@@ -21,14 +21,25 @@ import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
 import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun PreTransferScreen(
+    onShowNodeStatus: () -> Unit,
+
     clientModel: ClientModel,
     onDownloadAll: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(
+                title = "Transfer",
+                onShowNodeStatus = onShowNodeStatus,
+                onBack = onCancel
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),

@@ -11,13 +11,24 @@ import androidx.compose.ui.Modifier
 import uniffi.musicopy.ClientModel
 import zip.meows.musicopy.shortenNodeId
 import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun WaitingScreen(
+    onShowNodeStatus: () -> Unit,
+
     clientModel: ClientModel,
     onCancel: () -> Unit,
 ) {
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(
+                title = "Waiting to connect",
+                onShowNodeStatus = onShowNodeStatus,
+                onBack = onCancel
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             verticalArrangement = Arrangement.Center,

@@ -13,14 +13,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import zip.meows.musicopy.ui.QRScanner
 import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
 fun ConnectQRScreen(
+    onShowNodeStatus: () -> Unit,
+
     isConnecting: Boolean,
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    Scaffold() { innerPadding ->
+    Scaffold(
+        topBar = {
+            TopBar(
+                title = "Connect using QR code",
+                onShowNodeStatus = onShowNodeStatus,
+                onBack = onCancel
+            )
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             verticalArrangement = Arrangement.Center,
