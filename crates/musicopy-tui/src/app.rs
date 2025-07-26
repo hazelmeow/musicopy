@@ -247,6 +247,11 @@ impl<'a> App<'a> {
                 self.core.remove_library_root(name)?;
             }
 
+            "resetdb" => {
+                self.core.reset_database()?;
+                self.core.rescan_library()?;
+            }
+
             "a" | "accept" => {
                 app_log!("accepting pending servers");
 

@@ -45,6 +45,9 @@ pub struct CoreOptions {
 #[derive(uniffi::Object)]
 pub struct Core {
     event_handler: Arc<dyn EventHandler>,
+
+    db: Arc<Mutex<Database>>,
+
     node_tx: mpsc::UnboundedSender<NodeCommand>,
     library_tx: mpsc::UnboundedSender<LibraryCommand>,
 }
@@ -136,6 +139,7 @@ impl Core {
         // spawn node thread
         std::thread::spawn({
             let event_handler = event_handler.clone();
+            let db = db.clone();
             move || {
                 // TODO: tune number of threads on mobile?
                 let builder = tokio::runtime::Builder::new_multi_thread()
@@ -200,6 +204,9 @@ impl Core {
 
         Ok(Arc::new(Self {
             event_handler,
+
+            db,
+
             node_tx,
             library_tx,
         }))
@@ -292,6 +299,17 @@ impl Core {
         self.library_tx
             .send(LibraryCommand::Rescan)
             .context("failed to send to library thread")?;
+        Ok(())
+    }
+
+    pub fn reset_database(&self) -> Result<(), CoreError> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_elapsed| core_error!("failed to lock database"))?;
+
+        db.reset()?;
+
         Ok(())
     }
 }

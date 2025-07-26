@@ -34,19 +34,29 @@ pub struct Database {
 }
 
 impl Database {
+    /// Open the database from a file.
     pub fn open_file(path: &Path) -> anyhow::Result<Self> {
         let conn = rusqlite::Connection::open(path)?;
-        Self::init_from_connection(conn)
+        Self::new_from_connection(conn)
     }
 
+    /// Open the databease in memory.
     pub fn open_in_memory() -> anyhow::Result<Self> {
         log::warn!("using in-memory database");
         let conn = rusqlite::Connection::open_in_memory()?;
-        Self::init_from_connection(conn)
+        Self::new_from_connection(conn)
     }
 
-    fn init_from_connection(conn: rusqlite::Connection) -> anyhow::Result<Self> {
-        conn.execute(
+    fn new_from_connection(conn: rusqlite::Connection) -> anyhow::Result<Self> {
+        let db = Self { conn };
+
+        db.create_tables()?;
+
+        Ok(db)
+    }
+
+    fn create_tables(&self) -> anyhow::Result<()> {
+        self.conn.execute(
             "CREATE TABLE IF NOT EXISTS roots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 node_id TEXT NOT NULL,
@@ -56,7 +66,7 @@ impl Database {
             )",
             [],
         )?;
-        conn.execute(
+        self.conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hash_kind TEXT NOT NULL,
@@ -69,8 +79,14 @@ impl Database {
             )",
             [],
         )?;
+        Ok(())
+    }
 
-        Ok(Self { conn })
+    pub fn reset(&self) -> anyhow::Result<()> {
+        self.conn.execute("DROP TABLE IF EXISTS roots", [])?;
+        self.conn.execute("DROP TABLE IF EXISTS files", [])?;
+        self.create_tables()?;
+        Ok(())
     }
 
     pub fn add_root(&self, node_id: NodeId, name: &str, path: &str) -> anyhow::Result<()> {
