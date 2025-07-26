@@ -249,11 +249,13 @@ impl Core {
     pub fn download_all(&self, node_id: &str, download_directory: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
+        // TODO: this shouldn't happen here
         self.node_tx
-            .send(NodeCommand::DownloadAll {
-                client: node_id,
-                download_directory: download_directory.into(),
-            })
+            .send(NodeCommand::SetDownloadDirectory(download_directory.into()))
+            .context("failed to send to node thread")?;
+
+        self.node_tx
+            .send(NodeCommand::DownloadAll { client: node_id })
             .context("failed to send to node thread")?;
 
         Ok(())

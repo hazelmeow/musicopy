@@ -59,6 +59,7 @@ impl ProgressCounterModel {
 /// Model of progress for a transfer job.
 #[derive(Debug, uniffi::Enum)]
 pub enum TransferJobProgressModel {
+    Queued,
     InProgress {
         /// Number of bytes written so far.
         bytes: Arc<ProgressCounterModel>,
@@ -143,6 +144,8 @@ pub struct NodeModel {
 
 #[derive(Debug)]
 pub enum NodeCommand {
+    SetDownloadDirectory(String),
+
     Connect {
         addr: NodeAddr,
         callback: oneshot::Sender<anyhow::Result<()>>,
@@ -153,7 +156,6 @@ pub enum NodeCommand {
 
     DownloadAll {
         client: NodeId,
-        download_directory: String,
     },
 
     Stop,
@@ -170,6 +172,8 @@ pub struct Node {
 
     servers: Mutex<HashMap<NodeId, ServerHandle>>,
     clients: Mutex<HashMap<NodeId, ClientHandle>>,
+
+    download_directory: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -209,6 +213,8 @@ impl Node {
 
             servers: Mutex::new(HashMap::new()),
             clients: Mutex::new(HashMap::new()),
+
+            download_directory: Arc::new(Mutex::new(None)),
         });
 
         let node_run = NodeRunToken {
@@ -235,6 +241,11 @@ impl Node {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
+                        NodeCommand::SetDownloadDirectory(path) => {
+                            let mut download_directory = self.download_directory.lock().unwrap();
+                            *download_directory = Some(path);
+                        },
+
                         NodeCommand::Connect { addr, callback } => {
                             let node = self.clone();
                             tokio::task::spawn(async move {
@@ -264,10 +275,19 @@ impl Node {
                             }
                         },
 
-                        NodeCommand::DownloadAll { client, download_directory } => {
+                        NodeCommand::DownloadAll { client } => {
+                            // check that download directory is set before downloading
+                            {
+                                let download_directory = self.download_directory.lock().unwrap();
+                                if download_directory.is_none() {
+                                    log::error!("DownloadAll: download directory not set");
+                                    continue;
+                                }
+                            };
+
                             let clients = self.clients.lock().unwrap();
                             if let Some(client_handle) = clients.get(&client) {
-                                client_handle.tx.send(ClientCommand::DownloadAll { download_directory }).expect("failed to send ClientCommand::DownloadAll");
+                                client_handle.tx.send(ClientCommand::DownloadAll).expect("failed to send ClientCommand::DownloadAll");
                             } else {
                                 log::error!("DownloadAll: no client found with node_id: {client}");
                             }
@@ -313,8 +333,9 @@ impl Node {
 
         let client_handle_tx = self.client_handle_tx.clone();
         let node = self.clone();
+        let download_directory = self.download_directory.clone();
         tokio::spawn(async move {
-            let client = Client::new(client_handle_tx, connection);
+            let client = Client::new(client_handle_tx, connection, download_directory);
 
             if let Err(e) = client.run().await {
                 log::error!("error during client.run(): {e:#}");
@@ -367,6 +388,7 @@ impl Node {
                                 let job = entry.value();
 
                                 let progress = match &job.progress {
+                                    TransferJobProgress::Queued => TransferJobProgressModel::Queued,
                                     TransferJobProgress::InProgress { written } => {
                                         TransferJobProgressModel::InProgress {
                                             bytes: Arc::new(ProgressCounterModel(written.clone())),
@@ -455,6 +477,7 @@ impl Node {
                                 let job = entry.value();
 
                                 let progress = match &job.progress {
+                                    TransferJobProgress::Queued => TransferJobProgressModel::Queued,
                                     TransferJobProgress::InProgress { written } => {
                                         TransferJobProgressModel::InProgress {
                                             bytes: Arc::new(ProgressCounterModel(written.clone())),
@@ -566,12 +589,26 @@ impl ProtocolHandler for Protocol {
     }
 }
 
+/// An item requested for downloading by the client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadItem {
+    job_id: u64,
+
+    node_id: NodeId,
+    root: String,
+    path: String,
+}
+
 /// A message sent by the client end of a connection on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ClientMessage {
+    /// Identify the client with a friendly name.
     Identify(String),
+    /// Request to download files.
+    Download(Vec<DownloadItem>),
 }
 
+/// An item available for downloading from the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexItem {
     node_id: NodeId,
@@ -584,35 +621,32 @@ struct IndexItem {
 /// A message sent by the server end of a connection on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ServerMessage {
+    /// Identify the server with a friendly name.
     Identify(String),
+    /// Notify the client that the connection has been accepted.
     Accepted,
+    /// Inform the client of available files.
     Index(Vec<IndexItem>),
+    /// Notify the client that requested files are ready for download.
+    JobReady(Vec<u64>),
 }
 
 /// A message sent by the client at the start of a file transfer stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DownloadRequest {
-    node_id: NodeId,
-    root: String,
-    path: String,
+struct TransferRequest {
+    job_id: u64,
 }
 
-/// A message sent by the server in a file transfer stream with file metadata.
+/// A message sent by the server in a file transfer stream in response to a TransfrRequest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DownloadResponse {
+struct TransferResponse {
     file_size: u64,
-}
-
-#[derive(Debug)]
-enum ServerCommand {
-    Accept,
-
-    Close,
 }
 
 #[derive(Debug)]
 struct TransferJob {
     started_at: u64,
+    file_node_id: NodeId,
     file_root: String,
     file_path: String,
     file_size: Option<u64>,
@@ -621,9 +655,17 @@ struct TransferJob {
 
 #[derive(Debug)]
 enum TransferJobProgress {
+    Queued,
     InProgress { written: Arc<AtomicU64> },
     Finished { finished_at: u64 },
     Failed { error: anyhow::Error },
+}
+
+#[derive(Debug)]
+enum ServerCommand {
+    Accept,
+
+    Close,
 }
 
 #[derive(Debug, Clone)]
@@ -643,8 +685,6 @@ struct Server {
 
     connected_at: u64,
 
-    next_job_id: AtomicU64,
-
     accepted: Arc<AtomicBool>,
     jobs: Arc<DashMap<u64, TransferJob>>,
 }
@@ -661,8 +701,6 @@ impl Server {
             handle_tx,
 
             connected_at: unix_epoch_now_secs(),
-
-            next_job_id: AtomicU64::new(0),
 
             accepted: Arc::new(AtomicBool::new(false)),
             jobs: Arc::new(DashMap::new()),
@@ -801,7 +839,31 @@ impl Server {
                 next_message = recv.next() => {
                     match next_message {
                         Some(Ok(message)) => {
-                            log::info!("accepted message: {message:?}");
+                            match message {
+                                ClientMessage::Identify(_) => {
+                                    log::warn!("unexpected ClientMessage::Identify in main loop");
+                                }
+
+                                ClientMessage::Download(items) => {
+                                    let ready = items.iter().map(|item| item.job_id).collect::<Vec<_>>();
+
+                                    for item in items {
+                                        self.jobs.insert(item.job_id, TransferJob {
+                                            started_at: unix_epoch_now_secs(),
+                                            file_node_id: item.node_id,
+                                            file_root: item.root,
+                                            file_path: item.path,
+                                            file_size: None,
+                                            progress: TransferJobProgress::Queued,
+                                        });
+                                    }
+
+                                    // TODO: check readiness (ie transcoding)
+                                    send.send(ServerMessage::JobReady(ready))
+                                        .await
+                                        .expect("failed to send JobReady message");
+                                }
+                            }
                         },
                         Some(Err(e)) => {
                             log::error!("error receiving message: {e}");
@@ -818,57 +880,67 @@ impl Server {
                     match accept_result {
                         Ok((mut send, mut recv)) => {
                             let db = self.db.clone();
-                            let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
                             let jobs = self.jobs.clone();
                             tokio::spawn(async move {
-                                // receive download request
-                                let download_req_len = recv.read_u32().await?;
-                                let mut download_req_buf = vec![0; download_req_len as usize];
+                                // receive transfer request with job id
+                                let transfer_req_len = recv.read_u32().await?;
+                                let mut transfer_req_buf = vec![0; transfer_req_len as usize];
                                 recv
-                                    .read_exact(&mut download_req_buf)
+                                    .read_exact(&mut transfer_req_buf)
                                     .await
-                                    .context("failed to read download request")?;
-                                let download_req: DownloadRequest =
-                                    postcard::from_bytes(&download_req_buf).context("failed to deserialize download request")?;
+                                    .context("failed to read transfer request")?;
+                                let transfer_req: TransferRequest =
+                                    postcard::from_bytes(&transfer_req_buf).context("failed to deserialize transfer request")?;
 
-                                log::info!("received download request for {}/{}", download_req.root, download_req.path);
+                                log::info!("received transfer request for job id {}", transfer_req.job_id);
+
+                                // get details from job
+                                let (file_node_id, file_root, file_path) = {
+                                    let Some(job) = jobs.get(&transfer_req.job_id) else {
+                                        anyhow::bail!("transfer request job id not found: {}", transfer_req.job_id);
+                                    };
+
+                                    (
+                                        job.file_node_id,
+                                        job.file_root.clone(),
+                                        job.file_path.clone(),
+                                    )
+                                };
 
                                 // query database for file
                                 let file = {
                                     let db = db.lock().unwrap();
                                     db.get_file_by_node_root_path(
-                                        download_req.node_id,
-                                        &download_req.root,
-                                        &download_req.path,
+                                        file_node_id,
+                                        &file_root,
+                                        &file_path,
                                     )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
                                 };
 
                                 // check local file exists
-                                let file_path = PathBuf::from(&file.local_path);
-                                if !file_path.exists() {
-                                    // TODO: create a job with failed progress
+                                let local_path = PathBuf::from(&file.local_path);
+                                if !local_path.exists() {
+                                    // TODO: set job to failed and respond with error
                                     anyhow::bail!("file at local_path does not exist: {}", file.local_path);
                                 }
 
                                 // get file size
-                                let metadata = file_path.metadata().context("failed to get file metadata")?;
+                                let metadata = local_path.metadata().context("failed to get file metadata")?;
                                 let file_size = metadata.len();
 
                                 let written = Arc::new(AtomicU64::new(0));
 
-                                // insert job
+                                // set job status to in progress
                                 {
-                                    jobs.insert(job_id, TransferJob {
-                                        started_at: unix_epoch_now_secs(),
-                                        file_root: download_req.root.clone(),
-                                        file_path: download_req.path.clone(),
-                                        file_size: Some(file_size),
-                                        progress: TransferJobProgress::InProgress { written: written.clone() },
+                                    jobs.alter(&transfer_req.job_id, |_, mut job| {
+                                        job.file_size = Some(file_size);
+                                        job.progress = TransferJobProgress::InProgress { written: written.clone() };
+                                        job
                                     });
                                 }
 
                                 // send download response with metadata
-                                let download_response = DownloadResponse {
+                                let download_response = TransferResponse {
                                     file_size,
                                 };
                                 let download_response_buf = postcard::to_stdvec(&download_response)
@@ -882,7 +954,7 @@ impl Server {
 
                                 // read file to buffer
                                 // TODO: stream instead of reading into memory?
-                                let file_content = tokio::fs::read(file_path).await?;
+                                let file_content = tokio::fs::read(local_path).await?;
 
                                 // TODO: handle errors during send
                                 let mut send_progress = WriteProgress::new(written.clone(), send);
@@ -890,13 +962,13 @@ impl Server {
 
                                 // mark job as finished
                                 {
-                                    jobs.alter(&job_id, |_, mut job| {
+                                    jobs.alter(&transfer_req.job_id, |_, mut job| {
                                         job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
                                         job
                                     });
                                 }
 
-                                log::info!("finished sending file content for {}/{}", download_req.root, download_req.path);
+                                log::info!("finished sending file content for {}/{}", file_root, file_path);
 
                                 Ok::<(), anyhow::Error>(())
                             });
@@ -940,7 +1012,7 @@ impl Server {
 enum ClientCommand {
     Close,
 
-    DownloadAll { download_directory: String },
+    DownloadAll,
 }
 
 #[derive(Debug, Clone)]
@@ -961,6 +1033,7 @@ struct Client {
     connected_at: u64,
 
     next_job_id: Arc<AtomicU64>,
+    ready_tx: mpsc::UnboundedSender<u64>,
 
     accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
@@ -971,7 +1044,150 @@ impl Client {
     fn new(
         handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
         connection: Connection,
+        download_directory: Arc<Mutex<Option<String>>>,
     ) -> Self {
+        let jobs = Arc::new(DashMap::<u64, TransferJob>::new());
+
+        // spawn a task to handle ready jobs and spawn more tasks to download them
+        // Client::run() receives ServerMessage::JobReady messages with ready job IDs and sends them to this channel
+        let (ready_tx, mut ready_rx) = mpsc::unbounded_channel::<u64>();
+        tokio::spawn({
+            let jobs = jobs.clone();
+            let connection = connection.clone();
+            async move {
+                // convert channel receiver of ready job IDs into a stream for use with buffer_unordered
+                let ready_stream = async_stream::stream! {
+                    while let Some(job_id) = ready_rx.recv().await {
+                        yield job_id;
+                    }
+                };
+
+                // map stream of ready ids to futures that download the files
+                let buffer = ready_stream
+                    .map(|job_id| {
+                        // get download directory
+                        let download_directory = {
+                            let download_directory = download_directory.lock().unwrap();
+                            download_directory.clone()
+                        };
+
+                        let jobs = jobs.clone();
+                        let connection = connection.clone();
+                        async move {
+                            // check if download directory is set
+                            // we need to do this inside the async block so that the return type of the closure is always the async block's anonymous future
+                            let Some(download_directory) = download_directory else {
+                                anyhow::bail!("download directory is None, cannot download");
+                            };
+
+                            // check job exists and get details
+                            let (file_node_id, file_root, file_path) = {
+                                let Some(mut job) = jobs.get_mut(&job_id) else {
+                                    anyhow::bail!("received JobReady for unknown job ID {job_id}");
+                                };
+
+                                (
+                                    job.file_node_id,
+                                    job.file_root.clone(),
+                                    job.file_path.clone(),
+                                )
+                            };
+
+                            log::debug!("downloading file: {}/{}", file_root, file_path);
+
+                            // open a bidirectional stream
+                            let (mut send, mut recv) = connection.open_bi().await?;
+
+                            // send transfer request with job id
+                            let transfer_request = TransferRequest { job_id };
+                            let transfer_request_buf = postcard::to_stdvec(&transfer_request)
+                                .context("failed to serialize transfer request")?;
+                            send.write_u32(transfer_request_buf.len() as u32)
+                                .await
+                                .context("failed to write transfer request length")?;
+                            send.write_all(&transfer_request_buf)
+                                .await
+                                .context("failed to write transfer request")?;
+
+                            // receive transfer response with metadata
+                            let transfer_response_len = recv.read_u32().await?;
+                            let mut transfer_response_buf = vec![0; transfer_response_len as usize];
+                            recv.read_exact(&mut transfer_response_buf)
+                                .await
+                                .context("failed to read transfer response")?;
+                            let transfer_response: TransferResponse =
+                                postcard::from_bytes(&transfer_response_buf)
+                                    .context("failed to deserialize transfer response")?;
+
+                            // set file size in job and set progress to InProgress
+                            let written = Arc::new(AtomicU64::new(0));
+                            jobs.alter(&job_id, |_, mut job| {
+                                job.file_size = Some(transfer_response.file_size);
+
+                                job.progress = TransferJobProgress::InProgress {
+                                    written: written.clone(),
+                                };
+
+                                job
+                            });
+
+                            // build file path
+                            let local_path = {
+                                let root_dir_name =
+                                    format!("musicopy-{}-{}", &file_node_id, &file_root);
+                                let mut local_path =
+                                    TreePath::new(download_directory, root_dir_name.into());
+                                local_path.push(&file_path);
+                                local_path
+                            };
+
+                            // create parent directories
+                            let parent_dir_path = local_path.parent();
+                            if let Some(parent) = parent_dir_path {
+                                crate::fs::create_dir_all(&parent)
+                                    .await
+                                    .context("failed to create directory for root")?;
+                            }
+
+                            // open file for writing
+                            let file = TreeFile::open_or_create(&local_path, OpenMode::Write)
+                                .await
+                                .context("failed to open file")?;
+
+                            // copy from stream to file
+                            let mut file_progress = WriteProgress::new(written.clone(), file);
+                            tokio::io::copy(
+                                &mut recv.take(transfer_response.file_size),
+                                &mut file_progress,
+                            )
+                            .await?;
+
+                            // mark job as finished
+                            jobs.alter(&job_id, |_, mut job| {
+                                job.progress = TransferJobProgress::Finished {
+                                    finished_at: unix_epoch_now_secs(),
+                                };
+                                job
+                            });
+
+                            log::debug!("saved file to {:?}", local_path);
+
+                            Ok::<(), anyhow::Error>(())
+                        }
+                    })
+                    .buffer_unordered(4);
+
+                tokio::pin!(buffer);
+
+                // poll the stream to download items with limited concurrency
+                while let Some(res) = buffer.next().await {
+                    if let Err(e) = res {
+                        log::error!("error downloading item: {e}");
+                    }
+                }
+            }
+        });
+
         Self {
             handle_tx,
             connection,
@@ -979,10 +1195,11 @@ impl Client {
             connected_at: unix_epoch_now_secs(),
 
             next_job_id: Arc::new(AtomicU64::new(0)),
+            ready_tx,
 
             accepted: Arc::new(AtomicBool::new(false)),
             index: Arc::new(Mutex::new(None)),
-            jobs: Arc::new(DashMap::new()),
+            jobs,
         }
     }
 
@@ -1059,7 +1276,7 @@ impl Client {
                             return Ok(());
                         }
 
-                        ClientCommand::DownloadAll {.. } => {
+                        ClientCommand::DownloadAll => {
                             log::warn!("unexpected DownloadAll command in waiting loop");
                         }
                     }
@@ -1108,9 +1325,7 @@ impl Client {
                             break;
                         }
 
-                        ClientCommand::DownloadAll { download_directory } => {
-                            log::info!("received DownloadAll command, downloading to {download_directory:?}");
-
+                        ClientCommand::DownloadAll => {
                             let index = {
                                 let index = self.index.lock().unwrap();
                                 index.clone()
@@ -1120,113 +1335,32 @@ impl Client {
                                 continue;
                             };
 
-                            // create a job for each item in the index
-                            let index_jobs = index.clone().into_iter().map(|item| {
+                            // create jobs and download request items
+                            let download_requests = index.clone().into_iter().map(|file| {
                                 let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
 
-                                let written = Arc::new(AtomicU64::new(0));
+                                self.jobs.insert(job_id, TransferJob {
+                                    started_at: unix_epoch_now_secs(),
+                                    file_node_id: file.node_id,
+                                    file_root: file.root.clone(),
+                                    file_path: file.path.clone(),
+                                    file_size: None,
+                                    progress: TransferJobProgress::Queued,
+                                });
 
-                                 // insert job
-                                {
-                                    self.jobs.insert(job_id, TransferJob {
-                                        started_at: unix_epoch_now_secs(),
-                                        file_root: item.root.clone(),
-                                        file_path: item.path.clone(),
-                                        file_size: None,
-                                        progress: TransferJobProgress::InProgress { written: written.clone() },
-                                    });
+                                DownloadItem {
+                                    job_id,
+
+                                    node_id: file.node_id,
+                                    root: file.root,
+                                    path: file.path,
                                 }
-
-                                (job_id, written, item)
                             }).collect::<Vec<_>>();
 
-                            // send download requests and write files to disk
-                            // this is only done for a few jobs at a time
-                            // TODO: tune concurrency level
-                            let mut buffered = futures::stream::iter(index_jobs)
-                                .map(|(job_id, written, item)| {
-                                    let connection = self.connection.clone();
-                                    let jobs = self.jobs.clone();
-                                    let download_directory = download_directory.clone();
-                                    async move {
-                                        log::debug!("downloading file: {}/{}", item.root, item.path);
-
-                                        // open a bidirectional stream
-                                        let (mut send, mut recv) = connection.open_bi().await?;
-
-                                        // send download request
-                                        let download_request = DownloadRequest {
-                                            node_id: item.node_id,
-                                            root: item.root.clone(),
-                                            path: item.path.clone()
-                                        };
-                                        let download_request_buf = postcard::to_stdvec(&download_request)
-                                            .context("failed to serialize download request")?;
-                                        send.write_u32(download_request_buf.len() as u32)
-                                            .await
-                                            .context("failed to write download request length")?;
-                                        send.write_all(&download_request_buf)
-                                            .await
-                                            .context("failed to write download request")?;
-
-                                        // receive download response with metadata
-                                        let download_response_len = recv.read_u32().await?;
-                                        let mut download_response_buf = vec![0; download_response_len as usize];
-                                        recv
-                                            .read_exact(&mut download_response_buf)
-                                            .await
-                                            .context("failed to read download response")?;
-                                        let download_response: DownloadResponse =
-                                            postcard::from_bytes(&download_response_buf).context("failed to deserialize download response")?;
-
-                                        // set file size in job
-                                        jobs.alter(&job_id, |_, mut job| {
-                                            job.file_size = Some(download_response.file_size);
-                                            job
-                                        });
-
-                                        // build file path
-                                        let file_path = {
-                                            let root_dir_name = format!("musicopy-{}-{}", &item.node_id, &item.root);
-                                            let mut file_path = TreePath::new(download_directory, root_dir_name.into());
-                                            file_path.push(&item.path);
-                                            file_path
-                                        };
-
-                                        // create parent directories
-                                        let parent_dir_path = file_path.parent();
-                                        if let Some(parent) = parent_dir_path {
-                                            crate::fs::create_dir_all(&parent).await
-                                                .context("failed to create directory for root")?;
-                                        }
-
-                                        // open file for writing
-                                        let file = TreeFile::open_or_create(&file_path, OpenMode::Write).await
-                                            .context("failed to open file")?;
-
-                                        // copy from stream to file
-                                        let mut file_progress = WriteProgress::new(written.clone(), file);
-                                        tokio::io::copy(&mut recv.take(download_response.file_size), &mut file_progress).await?;
-
-                                        // mark job as finished
-                                        jobs.alter(&job_id, |_, mut job| {
-                                            job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
-                                            job
-                                        });
-
-                                        log::debug!("saved file to {:?}", file_path);
-
-                                        Ok::<(), anyhow::Error>(())
-                                    }
-                                })
-                                .buffer_unordered(4);
-
-                            while let Some(res) = buffered.next().await {
-                                if let Err(e) = res {
-                                    log::error!("error downloading item: {e}");
-                                    continue;
-                                }
-                            }
+                            // send download request
+                            send.send(ClientMessage::Download(download_requests))
+                                .await
+                                .expect("failed to send Download message");
                         }
                     }
                 }
@@ -1240,6 +1374,13 @@ impl Client {
                                     {
                                         let mut index = self.index.lock().unwrap();
                                         *index = Some(new_index);
+                                    }
+                                }
+
+                                ServerMessage::JobReady(job_ids) => {
+                                    // send job ids to ready channel
+                                    for job_id in job_ids {
+                                        self.ready_tx.send(job_id).context("ready channel closed")?;
                                     }
                                 }
 

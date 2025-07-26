@@ -226,18 +226,21 @@ impl<'a> App<'a> {
                     return vec![];
                 }
 
-                let (count_inprogress, count_finished, count_failed) =
+                let (count_queued, count_inprogress, count_finished, count_failed) =
                     server.transfer_jobs.iter().fold(
-                        (0, 0, 0),
-                        |(inprogress, finished, failed), job| match &job.progress {
+                        (0, 0, 0, 0),
+                        |(queued, inprogress, finished, failed), job| match &job.progress {
+                            TransferJobProgressModel::Queued => {
+                                (queued + 1, inprogress, finished, failed)
+                            }
                             TransferJobProgressModel::InProgress { .. } => {
-                                (inprogress + 1, finished, failed)
+                                (queued, inprogress + 1, finished, failed)
                             }
                             TransferJobProgressModel::Finished { .. } => {
-                                (inprogress, finished + 1, failed)
+                                (queued, inprogress, finished + 1, failed)
                             }
                             TransferJobProgressModel::Failed { .. } => {
-                                (inprogress, finished, failed + 1)
+                                (queued, inprogress, finished, failed + 1)
                             }
                         },
                     );
@@ -246,6 +249,8 @@ impl<'a> App<'a> {
                     " - ".into(),
                     shorten_id(&server.node_id).blue(),
                     ": ".into(),
+                    count_queued.to_string().green(),
+                    " queued / ".into(),
                     count_inprogress.to_string().green(),
                     " in progress / ".into(),
                     count_finished.to_string().green(),
@@ -315,18 +320,21 @@ impl<'a> App<'a> {
                     return vec![];
                 }
 
-                let (count_inprogress, count_finished, count_failed) =
+                let (count_queued, count_inprogress, count_finished, count_failed) =
                     client.transfer_jobs.iter().fold(
-                        (0, 0, 0),
-                        |(inprogress, finished, failed), job| match &job.progress {
+                        (0, 0, 0, 0),
+                        |(queued, inprogress, finished, failed), job| match &job.progress {
+                            TransferJobProgressModel::Queued => {
+                                (queued + 1, inprogress, finished, failed)
+                            }
                             TransferJobProgressModel::InProgress { .. } => {
-                                (inprogress + 1, finished, failed)
+                                (queued, inprogress + 1, finished, failed)
                             }
                             TransferJobProgressModel::Finished { .. } => {
-                                (inprogress, finished + 1, failed)
+                                (queued, inprogress, finished + 1, failed)
                             }
                             TransferJobProgressModel::Failed { .. } => {
-                                (inprogress, finished, failed + 1)
+                                (queued, inprogress, finished, failed + 1)
                             }
                         },
                     );
@@ -335,6 +343,8 @@ impl<'a> App<'a> {
                     " - ".into(),
                     shorten_id(&client.node_id).blue(),
                     ": ".into(),
+                    count_queued.to_string().green(),
+                    " queued / ".into(),
                     count_inprogress.to_string().green(),
                     " in progress / ".into(),
                     count_finished.to_string().green(),
