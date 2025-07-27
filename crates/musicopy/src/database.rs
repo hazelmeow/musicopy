@@ -12,7 +12,7 @@ pub struct Root {
 pub struct File {
     pub id: u64,
     pub hash_kind: String,
-    pub hash: String,
+    pub hash: Vec<u8>,
     pub node_id: NodeId,
     pub root: String,
     pub path: String,
@@ -21,8 +21,7 @@ pub struct File {
 
 pub struct InsertFile<'a> {
     pub hash_kind: &'a str,
-    pub hash: &'a str,
-    pub node_id: NodeId,
+    pub hash: &'a [u8],
     pub root: &'a str,
     pub path: &'a str,
     pub local_path: &'a str,
@@ -70,7 +69,7 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hash_kind TEXT NOT NULL,
-                hash TEXT NOT NULL,
+                hash BLOB NOT NULL,
                 node_id TEXT NOT NULL,
                 root TEXT NOT NULL,
                 path TEXT NOT NULL,
@@ -145,8 +144,10 @@ impl Database {
         Ok(count)
     }
 
-    pub fn insert_files<'a>(
+    /// Delete all local files and insert new ones.
+    pub fn replace_local_files<'a>(
         &mut self,
+        local_node_id: NodeId,
         iter: impl Iterator<Item = InsertFile<'a>>,
     ) -> anyhow::Result<()> {
         let tx = self
@@ -154,13 +155,18 @@ impl Database {
             .transaction()
             .context("failed to begin transaction")?;
 
+        tx.execute(
+            "DELETE FROM files WHERE node_id = ?",
+            [node_id_to_string(&local_node_id)],
+        )?;
+
         {
             let mut stmt = tx.prepare("INSERT INTO files (hash_kind, hash, node_id, root, path, local_path) VALUES (?, ?, ?, ?, ?, ?)")?;
             for file in iter {
                 stmt.execute((
                     file.hash_kind,
                     file.hash,
-                    node_id_to_string(&file.node_id),
+                    node_id_to_string(&local_node_id),
                     file.root,
                     file.path,
                     file.local_path,

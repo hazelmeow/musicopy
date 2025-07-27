@@ -2,10 +2,19 @@ use crate::database::{Database, InsertFile};
 use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
+use rayon::{iter::Either, prelude::*};
 use std::{
+    hash::Hasher,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use symphonia::core::{
+    codecs::audio::VerificationCheck,
+    formats::{FormatOptions, TrackType, probe::Hint},
+    io::MediaSourceStream,
+    meta::MetadataOptions,
+};
+use twox_hash::XxHash3_64;
 
 #[derive(Debug, uniffi::Record)]
 pub struct LibraryRootModel {
@@ -101,17 +110,16 @@ impl Library {
         tokio::spawn(async move {
             log::debug!("spawning library scan");
             if let Err(e) = protocol.scan().await {
-                println!("error scanning library: {e:#}");
+                log::error!("error scanning library: {e:#}");
             }
             log::debug!("finished library scan");
         });
     }
 
-    // TODO: stream results asynchronously? scanning the fs is fast but transcoding is slow,
-    // so when do we do that?
+    // TODO: lock so only one scan is running at a time
+    // TODO: check perf when scanning large libraries
+    // TODO: incremental scans? using existing files to skip work, instead of redoing everything? maybe only when new roots added?
     async fn scan(self: &Arc<Self>) -> anyhow::Result<()> {
-        // TODO: lock so only one scan is running at a time
-
         let mut errors = Vec::new();
 
         let (roots, prev_local_files) = {
@@ -187,8 +195,6 @@ impl Library {
                     .to_string();
 
                 anyhow::Result::Ok(ScanItem {
-                    // hash_kind: "sha256".to_string(),
-                    // hash: "".to_string(),
                     root: root.name.clone(),
                     path,
                     local_path: local_path.to_string_lossy().to_string(),
@@ -203,35 +209,61 @@ impl Library {
                 .map(|e: anyhow::Error| e.context("failed to scan file")),
         );
 
+        struct HashItem {
+            hash_kind: &'static str,
+            hash: Vec<u8>,
+            root: String,
+            path: String,
+            local_path: String,
+        }
+
+        let (items, hash_errors): (Vec<_>, Vec<_>) = tokio::task::spawn_blocking(move || {
+            local_files
+                .into_par_iter()
+                .map(|item| {
+                    let local_path = PathBuf::from(&item.local_path);
+
+                    let (hash_kind, hash) = get_file_hash(&local_path)?;
+
+                    anyhow::Result::Ok(HashItem {
+                        hash_kind,
+                        hash,
+                        root: item.root,
+                        path: item.path,
+                        local_path: item.local_path,
+                    })
+                })
+                .map(|res| match res {
+                    Ok(item) => Either::Left(item),
+                    Err(item) => Either::Right(item),
+                })
+                .collect::<(Vec<_>, Vec<_>)>()
+        })
+        .await?;
+
+        // extend errors
+        errors.extend(hash_errors);
+
         for error in errors {
             log::error!("error scanning library: {error:#}");
         }
 
         {
             let mut db = self.db.lock().unwrap();
-            db.insert_files(local_files.iter().map(|item| InsertFile {
-                hash_kind: "sha256",
-                hash: "",
-                node_id: self.local_node_id,
-                root: &item.root,
-                path: &item.path,
-                local_path: &item.local_path,
-            }))?;
+            db.replace_local_files(
+                self.local_node_id,
+                items.iter().map(|item| InsertFile {
+                    hash_kind: item.hash_kind,
+                    hash: &item.hash,
+                    root: &item.root,
+                    path: &item.path,
+                    local_path: &item.local_path,
+                }),
+            )
+            .context("failed to insert files into database")?;
         }
 
-        log::info!("scan: inserted {} files into database", local_files.len());
-
-        let index = local_files
-            .iter()
-            .map(|item| {
-                // TODO
-                let full_path = format!("{}/{}", item.root, item.path);
-                full_path
-            })
-            .collect::<Vec<String>>();
-
-        // TODO
-        // self.library.store(Arc::new(index));
+        log::info!("scan: inserted {} files into database", items.len());
 
         // TODO
         // self.notify_state();
@@ -260,5 +292,64 @@ impl Library {
         };
 
         LibraryModel { local_roots }
+    }
+}
+
+/// Get the hash of a file.
+///
+/// If the file contains an MD5 checksum (many flacs do), then it will be used.
+/// Otherwise, the file will be decoded and the audio data will be hashed using
+/// xxhash3 with 64-bit hashes.
+fn get_file_hash(path: &PathBuf) -> anyhow::Result<(&'static str, Vec<u8>)> {
+    let src = std::fs::File::open(path).context("failed to open file")?;
+
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension() {
+        hint.with_extension(extension.to_str().unwrap());
+    }
+
+    let meta_opts = MetadataOptions::default();
+    let fmt_opts = FormatOptions::default();
+
+    let mut probe = symphonia::default::get_probe()
+        .probe(&hint, mss, fmt_opts, meta_opts)
+        .context("failed to probe file")?;
+
+    let audio_track = probe
+        .default_track(TrackType::Audio)
+        .context("failed to get default audio track")?;
+    let audio_track_id = audio_track.id;
+
+    if let Some(VerificationCheck::Md5(verification_md5)) = &audio_track
+        .codec_params
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("failed to get codec params"))?
+        .audio()
+        .ok_or_else(|| anyhow::anyhow!("failed to get audio codec params"))?
+        .verification_check
+    {
+        Ok(("md5", Vec::from(verification_md5)))
+    } else {
+        let mut hasher = XxHash3_64::with_seed(8888);
+
+        loop {
+            let packet = match probe.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => break,
+                Err(e) => anyhow::bail!("failed to read packet: {e}"),
+            };
+            if packet.track_id() != audio_track_id {
+                continue;
+            }
+            hasher.write(packet.buf());
+        }
+
+        // the convention for xxhash is to use big-endian byte order
+        // https://github.com/Cyan4973/xxHash/blob/55d9c43608e39b2acd7d9a9cc3df424f812b6642/xxhash.h#L192
+        let hash = hasher.finish().to_be_bytes();
+
+        Ok(("xxh3", Vec::from(hash)))
     }
 }

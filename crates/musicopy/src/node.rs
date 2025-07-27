@@ -102,7 +102,7 @@ pub struct ServerModel {
 pub struct IndexItemModel {
     pub node_id: String,
     pub hash_kind: String,
-    pub hash: String,
+    pub hash: Vec<u8>,
     pub root: String,
     pub path: String,
 }
@@ -613,7 +613,7 @@ enum ClientMessage {
 struct IndexItem {
     node_id: NodeId,
     hash_kind: String,
-    hash: String,
+    hash: Vec<u8>,
     root: String,
     path: String,
 }
@@ -1082,7 +1082,7 @@ impl Client {
 
                             // check job exists and get details
                             let (file_node_id, file_root, file_path) = {
-                                let Some(mut job) = jobs.get_mut(&job_id) else {
+                                let Some(job) = jobs.get(&job_id) else {
                                     anyhow::bail!("received JobReady for unknown job ID {job_id}");
                                 };
 
