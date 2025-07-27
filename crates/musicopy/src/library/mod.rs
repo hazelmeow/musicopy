@@ -1,4 +1,9 @@
-use crate::database::{Database, InsertFile};
+pub mod transcode;
+
+use crate::{
+    database::{Database, InsertFile},
+    library::transcode::{TranscodeCommand, TranscodeItem, TranscodePool, TranscodeStatusCache},
+};
 use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
@@ -14,6 +19,7 @@ use symphonia::core::{
     io::MediaSourceStream,
     meta::MetadataOptions,
 };
+use tokio::sync::mpsc;
 use twox_hash::XxHash3_64;
 
 #[derive(Debug, uniffi::Record)]
@@ -40,11 +46,36 @@ pub enum LibraryCommand {
 pub struct Library {
     db: Arc<Mutex<Database>>,
     local_node_id: NodeId,
+
+    transcode_tx: mpsc::UnboundedSender<TranscodeCommand>,
 }
 
 impl Library {
-    pub async fn new(db: Arc<Mutex<Database>>, local_node_id: NodeId) -> anyhow::Result<Arc<Self>> {
-        let library = Arc::new(Self { db, local_node_id });
+    pub async fn new(
+        db: Arc<Mutex<Database>>,
+        local_node_id: NodeId,
+        transcodes_dir: PathBuf,
+        transcode_status_cache: TranscodeStatusCache,
+    ) -> anyhow::Result<Arc<Self>> {
+        // spawn transcode pool task
+        let transcode_pool = TranscodePool::new(transcodes_dir, transcode_status_cache);
+        let (transcode_tx, transcode_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            if let Err(e) = transcode_pool.run(transcode_rx).await {
+                log::error!("error running transcode pool: {e:#}");
+            }
+        });
+
+        let library = Arc::new(Self {
+            db,
+            local_node_id,
+            transcode_tx,
+        });
+
+        // send all local files to the transcode pool to be transcoded if needed
+        library
+            .check_transcodes()
+            .context("failed to check transcodes")?;
 
         Ok(library)
     }
@@ -217,6 +248,7 @@ impl Library {
             local_path: String,
         }
 
+        // hash items in parallel using rayon
         let (items, hash_errors): (Vec<_>, Vec<_>) = tokio::task::spawn_blocking(move || {
             local_files
                 .into_par_iter()
@@ -265,8 +297,50 @@ impl Library {
 
         log::info!("scan: inserted {} files into database", items.len());
 
+        // send local files to transcode pool
+        // will be skipped if already transcoded. might be able to make more efficient by only sending new files
+        // TODO: cancel transcodes for files that were removed
+        {
+            let transcode_add_items = items
+                .into_iter()
+                .map(|item| TranscodeItem {
+                    hash_kind: item.hash_kind.to_string(),
+                    hash: item.hash,
+                    local_path: PathBuf::from(item.local_path),
+                })
+                .collect::<Vec<_>>();
+
+            self.transcode_tx
+                .send(TranscodeCommand::Add(transcode_add_items))
+                .context("failed to send transcode command")?;
+        }
+
         // TODO
         // self.notify_state();
+
+        Ok(())
+    }
+
+    /// Send all local files to the transcode pool to be transcoded if needed.
+    fn check_transcodes(&self) -> anyhow::Result<()> {
+        let local_files = {
+            let db = self.db.lock().expect("failed to lock database");
+            db.get_files_by_node_id(self.local_node_id)
+                .context("failed to get local files")?
+        };
+
+        let transcode_add_items = local_files
+            .into_iter()
+            .map(|file| TranscodeItem {
+                hash_kind: file.hash_kind,
+                hash: file.hash,
+                local_path: PathBuf::from(file.local_path),
+            })
+            .collect::<Vec<_>>();
+
+        self.transcode_tx
+            .send(TranscodeCommand::Add(transcode_add_items))
+            .context("failed to send transcode command")?;
 
         Ok(())
     }

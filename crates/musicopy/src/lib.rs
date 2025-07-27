@@ -8,7 +8,7 @@ pub mod node;
 use crate::{
     database::Database,
     error::{CoreError, core_error},
-    library::{Library, LibraryCommand, LibraryModel},
+    library::{Library, LibraryCommand, LibraryModel, transcode::TranscodeStatusCache},
     node::{Node, NodeCommand, NodeModel},
 };
 use anyhow::Context;
@@ -95,12 +95,21 @@ impl Core {
 
         // TODO: pass arg for android dir
         let in_memory = cfg!(target_os = "android") || options.in_memory;
-        let (db, secret_key) = if in_memory {
+
+        let (db, secret_key, transcodes_dir) = if in_memory {
             let db = Database::open_in_memory().context("failed to open database")?;
 
             let secret_key = SecretKey::generate(rand::rngs::OsRng);
 
-            (db, secret_key)
+            // TODO: maybe clean contents or name uniquely each run
+            let transcodes_dir = {
+                // TODO: this doesn't work on android, but we only use it for transcoding for now
+                let mut p = std::env::temp_dir();
+                p.push("musicopy/transcodes");
+                p
+            };
+
+            (db, secret_key, transcodes_dir)
         } else {
             let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")
                 .context("failed to get project directories")?;
@@ -127,9 +136,16 @@ impl Core {
                 new_key
             };
 
-            (db, secret_key)
+            let transcodes_dir = {
+                let cache_dir = project_dirs.cache_dir();
+                cache_dir.join("transcodes")
+            };
+
+            (db, secret_key, transcodes_dir)
         };
         let db = Arc::new(Mutex::new(db));
+
+        let transcode_status_cache = TranscodeStatusCache::new();
 
         let node_id = NodeId::from(secret_key.public());
 
@@ -163,7 +179,9 @@ impl Core {
 
                     // TODO clean this up
                     // TODO pass path to files from app
-                    let library = Library::new(db, node_id).await.unwrap();
+                    let library = Library::new(db, node_id, transcodes_dir, transcode_status_cache)
+                        .await
+                        .unwrap();
                     tokio::spawn({
                         let library = library.clone();
                         async move {

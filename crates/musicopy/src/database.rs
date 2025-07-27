@@ -205,6 +205,33 @@ impl Database {
         .collect()
     }
 
+    pub fn get_files_by_node_id(&self, node_id: NodeId) -> anyhow::Result<Vec<File>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE node_id = ?")
+            .expect("should prepare statement");
+
+        let node_id = node_id_to_string(&node_id);
+        stmt.query_and_then([&node_id], |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(3)?).context("failed to parse node id")?;
+            let node_id =
+                NodeId::try_from(node_id.as_slice()).context("failed to parse node id")?;
+
+            Ok(File {
+                id: row.get(0)?,
+                hash_kind: row.get(1)?,
+                hash: row.get(2)?,
+                node_id,
+                root: row.get(4)?,
+                path: row.get(5)?,
+                local_path: row.get(6)?,
+            })
+        })
+        .expect("should bind parameters")
+        .collect()
+    }
+
     pub fn get_file_by_node_root_path(
         &self,
         node_id: NodeId,
