@@ -252,6 +252,10 @@ impl<'a> App<'a> {
                 self.core.rescan_library()?;
             }
 
+            "rescan" => {
+                self.core.rescan_library()?;
+            }
+
             "a" | "accept" => {
                 app_log!("accepting pending servers");
 
