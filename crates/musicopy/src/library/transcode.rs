@@ -525,7 +525,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
     };
 
     // interleave samples since opus needs interleaved input
-    // TODO: explore SIMD for this
+    // TODO: profile + explore SIMD for this
     let interleaved_samples = if channel_count == 2 {
         let mut interleaved_samples = vec![0.0; resampled_samples[0].len() * channel_count];
 
