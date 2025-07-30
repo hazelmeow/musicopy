@@ -112,6 +112,13 @@ fun TransferScreen(
                         ) {
                             val progress = job.progress
                             when (progress) {
+                                is TransferJobProgressModel.Queued -> {
+                                    Icon(
+                                        painter = painterResource(Res.drawable.chevron_forward_24px),
+                                        contentDescription = null,
+                                    )
+                                }
+
                                 is TransferJobProgressModel.InProgress -> {
                                     var targetProgress by remember { mutableFloatStateOf(0f) }
                                     val animatedProgress by animateFloatAsState(
@@ -165,11 +172,8 @@ internal fun formatJobName(job: TransferJobModel): String {
 internal fun formatJobSubtitle(job: TransferJobModel): String {
     val progress = job.progress
     return when (progress) {
-        is TransferJobProgressModel.Finished -> {
-            job.fileSize?.let {
-                val totalMB = it.toFloat() / 1_000_000f
-                "${formatFloat(totalMB, 1)} MB"
-            } ?: ""
+        is TransferJobProgressModel.Queued -> {
+            "Waiting..."
         }
 
         is TransferJobProgressModel.InProgress -> {
@@ -178,6 +182,13 @@ internal fun formatJobSubtitle(job: TransferJobModel): String {
                 val progressMB = progress.bytes.get().toFloat() / 1_000_000f
                 "${formatFloat(progressMB, 1)} MB/${formatFloat(totalMB, 1)} MB"
             } ?: "Waiting..."
+        }
+
+        is TransferJobProgressModel.Finished -> {
+            job.fileSize?.let {
+                val totalMB = it.toFloat() / 1_000_000f
+                "${formatFloat(totalMB, 1)} MB"
+            } ?: ""
         }
 
         is TransferJobProgressModel.Failed -> "Error: ${progress.error}"
