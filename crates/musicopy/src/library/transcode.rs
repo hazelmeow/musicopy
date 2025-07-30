@@ -404,7 +404,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
         .set_bitrate(opus::Bitrate::Bits(128000))
         .context("failed to set opus bitrate")?;
 
-    let lookahead_samples = encoder
+    let lookahead_frames = encoder
         .get_lookahead()
         .context("failed to get opus encoder lookahead")? as usize;
 
@@ -426,7 +426,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
         let original_frames = original_samples[0].len();
 
         // number of frames after resampling, including zero-padding for encoder lookahead
-        let new_frames = (original_frames * 48000 / sample_rate) + lookahead_samples;
+        let new_frames = (original_frames * 48000 / sample_rate) + lookahead_frames;
 
         // pre-allocate output buffer with enough capacity
         // TODO: we might need a little more than this, should check its final capacity to see if it gets resized usually
@@ -435,7 +435,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
 
         // pad start with zeros
         for channel in resampled_samples.iter_mut() {
-            channel.resize(lookahead_samples, 0.0);
+            channel.resize(lookahead_frames, 0.0);
         }
 
         // allocate chunk input slices vec and chunk output buffer
@@ -511,7 +511,17 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
 
         resampled_samples
     } else {
-        original_samples
+        // we don't need to resample, but we still need to pad the start with zeros
+
+        let original_frames = original_samples[0].len();
+
+        let mut resampled_samples = vec![Vec::new(); channel_count];
+        for i in 0..channel_count {
+            resampled_samples[i].resize(lookahead_frames + original_frames, 0.0);
+            resampled_samples[i][lookahead_frames..].copy_from_slice(&original_samples[i][..]);
+        }
+
+        resampled_samples
     };
 
     // interleave samples since opus needs interleaved input
@@ -539,7 +549,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
     // we write the number of lookahead frames as pre-skip in the opus header
     // we added this many zeros to the start of the resampled samples to account for encoder lookahead
     // players should skip these frames when decoding
-    let preskip_bytes = lookahead_samples.to_le_bytes();
+    let preskip_bytes = lookahead_frames.to_le_bytes();
 
     // input sample rate is always 48000 since we resample to it
     let rate_bytes = 48000u32.to_le_bytes();
