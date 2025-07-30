@@ -417,6 +417,10 @@ fn get_file_hash(path: &PathBuf) -> anyhow::Result<(&'static str, Vec<u8>)> {
             if packet.track_id() != audio_track_id {
                 continue;
             }
+
+            // hash the packet bytes, without decoding them.
+            // this is maybe more stable than hashing the decoded samples, and
+            // should still stay the same when metadata is modified.
             hasher.write(packet.buf());
         }
 
