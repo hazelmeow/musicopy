@@ -84,6 +84,8 @@ kotlin {
     }
 }
 
+val appVersionCode = System.getenv("APP_VERSION_CODE")?.toInt() ?: 1
+
 android {
     namespace = "zip.meows.musicopy"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -92,8 +94,8 @@ android {
         applicationId = "zip.meows.musicopy"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = "0.1"
     }
     packaging {
         resources {

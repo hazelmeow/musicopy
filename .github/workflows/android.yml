@@ -1,0 +1,78 @@
+name: Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubicloud-standard-30-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: date
+        name: Get date
+        run: echo "date=$(date -u +'%y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Restore build count
+        uses: actions/cache@v4
+        with:
+          path: .buildcount
+          key: buildcount-android-${{ steps.date.outputs.date }}-${{ github.run_id }}
+          restore-keys: buildcount-android-${{ steps.date.outputs.date }}-
+
+      - id: buildcount
+        name: Init or increment build count
+        run: |
+          mkdir -p .buildcount
+          if [ -f ".buildcount/counter.txt" ]; then
+            count=$(cat .buildcount/counter.txt)
+            count=$((count + 1))
+          else
+            count=1
+          fi
+          echo $count > .buildcount/counter.txt
+          echo "buildcount=$count" >> $GITHUB_OUTPUT
+          echo "versioncode=${{ steps.date.outputs.date }}$(printf %02d $count)" >> $GITHUB_OUTPUT
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Rust
+        run: |
+          rustup install stable
+          rustup default stable
+          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build app
+        env:
+          APP_VERSION_CODE: ${{ steps.buildcount.outputs.versioncode }}
+        run: ./gradlew bundleRelease
+
+      - name: Sign app
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: composeApp/build/outputs/bundle/release
+          signingKeyBase64: ${{ secrets.KEYSTORE }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        
+      - name: Upload app
+        uses: r0adkll/upload-google-play@v1
+        with:
+          releaseFiles: composeApp/build/outputs/bundle/release/composeApp-release.aab
+          serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          packageName: zip.meows.musicopy
+          track: internal
+          status: draft
