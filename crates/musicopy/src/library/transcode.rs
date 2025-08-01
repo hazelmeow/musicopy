@@ -212,7 +212,7 @@ impl TranscodePool {
                 }
             })
             .filter_map(|entry| match self.parse_transcodes_dir_entry(&entry) {
-                Ok(res) => Some(res),
+                Ok(res) => res,
                 Err(e) => {
                     log::error!(
                         "failed to parse transcode cache directory entry at {}: {}",
@@ -240,7 +240,7 @@ impl TranscodePool {
     fn parse_transcodes_dir_entry(
         &self,
         entry: &std::fs::DirEntry,
-    ) -> anyhow::Result<(PathBuf, String, Vec<u8>, u64)> {
+    ) -> anyhow::Result<Option<(PathBuf, String, Vec<u8>, u64)>> {
         // get entry file type
         let file_type = entry.file_type().context("failed to get file type")?;
 
@@ -250,6 +250,24 @@ impl TranscodePool {
         }
 
         let path = entry.path();
+
+        // check if the file has a valid extension
+        match path.extension() {
+            Some(ext) if ext == "ogg" => {}
+            Some(ext) if ext == "tmp" => {
+                // remove temp files from previous runs
+                log::info!("removing old temp file: {}", path.display());
+
+                let _ = std::fs::remove_file(path);
+
+                return Ok(None);
+            }
+            _ => {
+                log::warn!("unexpected file in transcodes dir: {}", path.display());
+
+                return Ok(None);
+            }
+        }
 
         // parse file name as <hash kind>-<hash hex>.ext
         let file_stem = path
@@ -268,7 +286,7 @@ impl TranscodePool {
             .context("failed to get file metadata")?
             .len();
 
-        Ok((path, hash_kind, hash, file_size))
+        Ok(Some((path, hash_kind, hash, file_size)))
     }
 
     pub async fn run(
@@ -297,7 +315,7 @@ impl TranscodePool {
                                 if status.is_none() {
                                     log::trace!("TranscodePool: queueing file {}", item.local_path.display());
 
-                                    // set status to queued
+                                    // set status to Queued
                                     self.status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
@@ -352,6 +370,7 @@ impl TranscodeWorker {
         transcodes_dir: PathBuf,
     ) -> anyhow::Result<()> {
         loop {
+            // wait for a job
             let job = {
                 let mut job_rx = job_rx.lock().expect("failed to lock job receiver");
                 let Some(job) = job_rx.blocking_recv() else {
@@ -361,50 +380,53 @@ impl TranscodeWorker {
                 job
             };
 
-            // TODO: write to temp filename and move after, clean up on startup
-            let output_path =
-                transcodes_dir.join(format!("{}-{}.ogg", job.hash_kind, hex::encode(&job.hash)));
+            // write to temp filename
+            let temp_path =
+                transcodes_dir.join(format!("{}-{}.tmp", job.hash_kind, hex::encode(&job.hash)));
 
             log::info!("transcoding file: {}", job.local_path.display());
-            if let Err(e) = transcode(&job.local_path, &output_path) {
+            if let Err(e) = transcode(&job.local_path, &temp_path) {
                 log::error!(
                     "failed to transcode file: {} -> {}: {e:#}",
                     job.local_path.display(),
-                    output_path.display()
+                    temp_path.display()
                 );
 
-                // try to remove the output file
-                let _ = std::fs::remove_file(&output_path);
+                // try to remove the temp file
+                let _ = std::fs::remove_file(&temp_path);
 
                 // TODO: set status to error
 
                 return Err(e).with_context(|| {
                     format!("failed to transcode file: {}", job.local_path.display())
                 });
-            } else {
-                log::info!(
-                    "finished transcoding file: {} -> {}",
-                    job.local_path.display(),
-                    output_path.display()
-                );
-
-                // get file size
-                // TODO: handle error more carefully
-                let file_size = output_path
-                    .metadata()
-                    .context("failed to get output file metadata")?
-                    .len();
-
-                // set status to Ready
-                status_cache.insert(
-                    job.hash_kind.clone(),
-                    job.hash.clone(),
-                    TranscodeStatus::Ready {
-                        local_path: output_path,
-                        file_size,
-                    },
-                );
             }
+
+            // get file size
+            let file_size = temp_path
+                .metadata()
+                .context("failed to get output file size")?
+                .len();
+
+            // rename the temp file
+            let final_path = temp_path.with_extension("ogg");
+            std::fs::rename(&temp_path, &final_path).context("failed to rename temp file")?;
+
+            log::info!(
+                "finished transcoding file: {} -> {}",
+                job.local_path.display(),
+                final_path.display()
+            );
+
+            // set status to Ready
+            status_cache.insert(
+                job.hash_kind.clone(),
+                job.hash.clone(),
+                TranscodeStatus::Ready {
+                    local_path: final_path,
+                    file_size,
+                },
+            );
         }
 
         // worker shut down
