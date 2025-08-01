@@ -70,6 +70,10 @@ impl TreePath {
         }
     }
 
+    pub fn set_extension(&mut self, extension: &str) {
+        self.path.set_extension(extension);
+    }
+
     pub fn parent(&self) -> Option<Self> {
         self.path.parent().map(|p| Self {
             tree: self.tree.clone(),

@@ -1397,6 +1397,7 @@ impl Client {
                                 let mut local_path =
                                     TreePath::new(download_directory, root_dir_name.into());
                                 local_path.push(&file_path);
+                                local_path.set_extension("ogg");
                                 local_path
                             };
 
