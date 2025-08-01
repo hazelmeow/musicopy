@@ -1016,6 +1016,7 @@ impl Server {
             async move {
                 loop {
                     let mut ready_jobs = Vec::new();
+                    let mut failed_jobs = Vec::new();
 
                     // check for jobs with Transcoding status
                     for job in jobs.iter() {
@@ -1027,20 +1028,39 @@ impl Server {
                                 continue;
                             };
 
-                            // if transcode status is Ready, set job status to Ready
-                            if let TranscodeStatus::Ready {
-                                local_path,
-                                file_size,
-                            } = &*status
-                            {
-                                ready_jobs.push((*job.key(), local_path.clone(), *file_size));
+                            match &*status {
+                                TranscodeStatus::Queued => {
+                                    // job is still queued
+                                }
+
+                                // if transcode status is Ready, set job status to Ready
+                                TranscodeStatus::Ready {
+                                    local_path,
+                                    file_size,
+                                } => {
+                                    ready_jobs.push((*job.key(), local_path.clone(), *file_size));
+                                }
+
+                                // if transcode status is Failed, set job status to Failed
+                                TranscodeStatus::Failed { error } => {
+                                    log::error!(
+                                        "transcoding failed for job {}: {}",
+                                        job.key(),
+                                        error
+                                    );
+
+                                    failed_jobs.push((
+                                        *job.key(),
+                                        anyhow::anyhow!("transcoding failed: {error}"),
+                                    ));
+                                }
                             }
                         }
                     }
 
-                    if !ready_jobs.is_empty() {
-                        // update job statuses and create status change items
-                        let status_changes = ready_jobs
+                    // create status changes for ready jobs
+                    let ready_jobs =
+                        ready_jobs
                             .into_iter()
                             .map(|(job_id, local_path, file_size)| {
                                 // set job status to Ready
@@ -1054,9 +1074,29 @@ impl Server {
                                 });
 
                                 (job_id, JobStatusItem::Ready { file_size })
-                            })
-                            .collect::<HashMap<_, _>>();
+                            });
 
+                    // create status changes for failed jobs
+                    let failed_jobs = failed_jobs.into_iter().map(|(job_id, error)| {
+                        let error_string = format!("{error}");
+
+                        // set job status to Failed
+                        // needs to happen outside the loop, since jobs.iter() already holds the entry's lock
+                        jobs.alter(&job_id, |_, mut job| {
+                            job.progress = ServerTransferJobProgress::Failed { error };
+                            job
+                        });
+
+                        (
+                            job_id,
+                            JobStatusItem::Failed {
+                                error: error_string,
+                            },
+                        )
+                    });
+
+                    let status_changes = ready_jobs.chain(failed_jobs).collect::<HashMap<_, _>>();
+                    if !status_changes.is_empty() {
                         // send status changes to client via ServerCommand::ServerMessage
                         if let Err(e) = tx.send(ServerCommand::ServerMessage(
                             ServerMessage::JobStatus(status_changes),
@@ -1159,6 +1199,7 @@ impl Server {
 
                                                 (item.job_id, JobStatusItem::Transcoding)
                                             }
+
                                             TranscodeStatus::Ready { local_path, file_size } => {
                                                 // file is already transcoded
 
@@ -1175,6 +1216,24 @@ impl Server {
 
                                                 (item.job_id, JobStatusItem::Ready {
                                                     file_size: *file_size,
+                                                })
+                                            }
+
+                                            TranscodeStatus::Failed { error } => {
+                                                // transcoding failed
+
+                                                // create job
+                                                self.jobs.insert(item.job_id, ServerTransferJob {
+                                                    progress: ServerTransferJobProgress::Failed {
+                                                        error: anyhow::anyhow!("transcoding failed: {error}"),
+                                                    },
+                                                    file_node_id: item.node_id,
+                                                    file_root: item.root,
+                                                    file_path: item.path,
+                                                });
+
+                                                (item.job_id, JobStatusItem::Failed {
+                                                    error: format!("{error:#}"),
                                                 })
                                             }
                                         }
@@ -1211,8 +1270,6 @@ impl Server {
                                     .context("failed to read transfer request")?;
                                 let transfer_req: TransferRequest =
                                     postcard::from_bytes(&transfer_req_buf).context("failed to deserialize transfer request")?;
-
-                                log::info!("received transfer request for job id {}", transfer_req.job_id);
 
                                 // check job status
                                 let (transfer_res, ready) = {

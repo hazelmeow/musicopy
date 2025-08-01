@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 pub enum TranscodeStatus {
     Queued,
     Ready { local_path: PathBuf, file_size: u64 },
+    Failed { error: anyhow::Error },
 }
 
 /// Helper trait for creating a borrowed hash key.
@@ -395,11 +396,15 @@ impl TranscodeWorker {
                 // try to remove the temp file
                 let _ = std::fs::remove_file(&temp_path);
 
-                // TODO: set status to error
+                // set status to Failed
+                status_cache.insert(
+                    job.hash_kind.clone(),
+                    job.hash.clone(),
+                    TranscodeStatus::Failed { error: e },
+                );
 
-                return Err(e).with_context(|| {
-                    format!("failed to transcode file: {}", job.local_path.display())
-                });
+                // next job
+                continue;
             }
 
             // get file size
