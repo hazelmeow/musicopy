@@ -11,6 +11,7 @@
 use crate::{
     database::Database,
     fs::{OpenMode, TreeFile, TreePath},
+    library::transcode::{TranscodeStatus, TranscodeStatusCache},
 };
 use anyhow::Context;
 use dashmap::DashMap;
@@ -30,7 +31,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -59,8 +60,11 @@ impl ProgressCounterModel {
 /// Model of progress for a transfer job.
 #[derive(Debug, uniffi::Enum)]
 pub enum TransferJobProgressModel {
-    Queued,
+    Requested,
+    Transcoding,
+    Ready,
     InProgress {
+        started_at: u64,
         /// Number of bytes written so far.
         bytes: Arc<ProgressCounterModel>,
     },
@@ -75,7 +79,7 @@ pub enum TransferJobProgressModel {
 /// Model of a transfer job.
 #[derive(Debug, uniffi::Record)]
 pub struct TransferJobModel {
-    pub started_at: u64,
+    pub job_id: u64,
     pub file_root: String,
     pub file_path: String,
     pub file_size: Option<u64>,
@@ -164,6 +168,7 @@ pub enum NodeCommand {
 #[derive(Debug)]
 pub struct Node {
     db: Arc<Mutex<Database>>,
+    transcode_status_cache: TranscodeStatusCache,
 
     router: Router,
     protocol: Protocol,
@@ -187,6 +192,7 @@ impl Node {
     pub async fn new(
         secret_key: SecretKey,
         db: Arc<Mutex<Database>>,
+        transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
         let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
         let (server_closed_tx, server_closed_rx) = mpsc::unbounded_channel();
@@ -197,7 +203,12 @@ impl Node {
             .discovery_n0()
             .bind()
             .await?;
-        let protocol = Protocol::new(db.clone(), server_handle_tx, server_closed_tx);
+        let protocol = Protocol::new(
+            db.clone(),
+            transcode_status_cache.clone(),
+            server_handle_tx,
+            server_closed_tx,
+        );
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
@@ -205,6 +216,7 @@ impl Node {
 
         let node = Arc::new(Self {
             db,
+            transcode_status_cache,
 
             router,
             protocol,
@@ -387,30 +399,50 @@ impl Node {
                             .map(|entry| {
                                 let job = entry.value();
 
-                                let progress = match &job.progress {
-                                    TransferJobProgress::Queued => TransferJobProgressModel::Queued,
-                                    TransferJobProgress::InProgress { written } => {
-                                        TransferJobProgressModel::InProgress {
-                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
-                                        }
+                                let (progress, file_size) = match &job.progress {
+                                    ServerTransferJobProgress::Transcoding { .. } => {
+                                        (TransferJobProgressModel::Transcoding, None)
                                     }
-                                    TransferJobProgress::Finished { finished_at } => {
+
+                                    ServerTransferJobProgress::Ready { file_size, .. } => {
+                                        (TransferJobProgressModel::Ready, Some(*file_size))
+                                    }
+
+                                    ServerTransferJobProgress::InProgress {
+                                        started_at,
+                                        file_size,
+                                        sent,
+                                    } => (
+                                        TransferJobProgressModel::InProgress {
+                                            started_at: *started_at,
+                                            bytes: Arc::new(ProgressCounterModel(sent.clone())),
+                                        },
+                                        Some(*file_size),
+                                    ),
+
+                                    ServerTransferJobProgress::Finished {
+                                        finished_at,
+                                        file_size,
+                                    } => (
                                         TransferJobProgressModel::Finished {
                                             finished_at: *finished_at,
-                                        }
-                                    }
-                                    TransferJobProgress::Failed { error } => {
+                                        },
+                                        Some(*file_size),
+                                    ),
+
+                                    ServerTransferJobProgress::Failed { error } => (
                                         TransferJobProgressModel::Failed {
                                             error: format!("{error:#}"),
-                                        }
-                                    }
+                                        },
+                                        None,
+                                    ),
                                 };
 
                                 TransferJobModel {
-                                    started_at: job.started_at,
+                                    job_id: *entry.key(),
                                     file_root: job.file_root.clone(),
                                     file_path: job.file_path.clone(),
-                                    file_size: job.file_size,
+                                    file_size,
                                     progress,
                                 }
                             })
@@ -476,30 +508,54 @@ impl Node {
                             .map(|entry| {
                                 let job = entry.value();
 
-                                let progress = match &job.progress {
-                                    TransferJobProgress::Queued => TransferJobProgressModel::Queued,
-                                    TransferJobProgress::InProgress { written } => {
-                                        TransferJobProgressModel::InProgress {
-                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
-                                        }
+                                let (progress, file_size) = match &job.progress {
+                                    ClientTransferJobProgress::Requested => {
+                                        (TransferJobProgressModel::Requested, None)
                                     }
-                                    TransferJobProgress::Finished { finished_at } => {
+
+                                    ClientTransferJobProgress::Transcoding => {
+                                        (TransferJobProgressModel::Transcoding, None)
+                                    }
+
+                                    ClientTransferJobProgress::Ready { file_size } => {
+                                        (TransferJobProgressModel::Ready, Some(*file_size))
+                                    }
+
+                                    ClientTransferJobProgress::InProgress {
+                                        started_at,
+                                        file_size,
+                                        written,
+                                    } => (
+                                        TransferJobProgressModel::InProgress {
+                                            started_at: *started_at,
+                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
+                                        },
+                                        Some(*file_size),
+                                    ),
+
+                                    ClientTransferJobProgress::Finished {
+                                        finished_at,
+                                        file_size,
+                                    } => (
                                         TransferJobProgressModel::Finished {
                                             finished_at: *finished_at,
-                                        }
-                                    }
-                                    TransferJobProgress::Failed { error } => {
+                                        },
+                                        Some(*file_size),
+                                    ),
+
+                                    ClientTransferJobProgress::Failed { error } => (
                                         TransferJobProgressModel::Failed {
-                                            error: format!("{error:#}"),
-                                        }
-                                    }
+                                            error: error.clone(),
+                                        },
+                                        None,
+                                    ),
                                 };
 
                                 TransferJobModel {
-                                    started_at: job.started_at,
+                                    job_id: *entry.key(),
                                     file_root: job.file_root.clone(),
                                     file_path: job.file_path.clone(),
-                                    file_size: job.file_size,
+                                    file_size,
                                     progress,
                                 }
                             })
@@ -547,6 +603,7 @@ impl Node {
 #[derive(Debug, Clone)]
 struct Protocol {
     db: Arc<Mutex<Database>>,
+    transcode_status_cache: TranscodeStatusCache,
     server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     server_closed_tx: mpsc::UnboundedSender<NodeId>,
 }
@@ -556,11 +613,13 @@ impl Protocol {
 
     fn new(
         db: Arc<Mutex<Database>>,
+        transcode_status_cache: TranscodeStatusCache,
         server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
         server_closed_tx: mpsc::UnboundedSender<NodeId>,
     ) -> Self {
         Self {
             db,
+            transcode_status_cache,
             server_handle_tx,
             server_closed_tx,
         }
@@ -570,13 +629,14 @@ impl Protocol {
 impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
+        let transcode_status_cache = self.transcode_status_cache.clone();
         let server_handle_tx = self.server_handle_tx.clone();
         let server_closed_tx = self.server_closed_tx.clone();
         Box::pin(async move {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
 
-            let server = Server::new(db, connection, server_handle_tx);
+            let server = Server::new(db, transcode_status_cache, connection, server_handle_tx);
             server.run().await?;
 
             // remove handle from hashmap
@@ -612,10 +672,19 @@ enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexItem {
     node_id: NodeId,
-    hash_kind: String,
-    hash: Vec<u8>,
     root: String,
     path: String,
+
+    hash_kind: String,
+    hash: Vec<u8>,
+}
+
+/// A job that changed status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum JobStatusItem {
+    Transcoding,
+    Ready { file_size: u64 },
+    Failed { error: String },
 }
 
 /// A message sent by the server end of a connection on the control stream.
@@ -627,8 +696,8 @@ enum ServerMessage {
     Accepted,
     /// Inform the client of available files.
     Index(Vec<IndexItem>),
-    /// Notify the client that requested files are ready for download.
-    JobReady(Vec<u64>),
+    /// Notify the client that the statuses of jobs have changed.
+    JobStatus(HashMap<u64, JobStatusItem>),
 }
 
 /// A message sent by the client at the start of a file transfer stream.
@@ -639,25 +708,38 @@ struct TransferRequest {
 
 /// A message sent by the server in a file transfer stream in response to a TransfrRequest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TransferResponse {
-    file_size: u64,
+enum TransferResponse {
+    /// The job is ready to be downloaded and will be sent by the server.
+    Ok { file_size: u64 },
+    /// The job was unable to be downloaded.
+    Error { error: String },
 }
 
 #[derive(Debug)]
-struct TransferJob {
-    started_at: u64,
+struct ServerTransferJob {
+    progress: ServerTransferJobProgress,
+
+    // for UI
     file_node_id: NodeId,
     file_root: String,
     file_path: String,
-    file_size: Option<u64>,
-    progress: TransferJobProgress,
 }
 
 #[derive(Debug)]
-enum TransferJobProgress {
-    Queued,
-    InProgress { written: Arc<AtomicU64> },
-    Finished { finished_at: u64 },
+enum ServerTransferJobProgress {
+    /// The server is waiting for the file to be transcoded.
+    Transcoding { hash_kind: String, hash: Vec<u8> },
+    /// The server is ready to send the file.
+    Ready { local_path: PathBuf, file_size: u64 },
+    /// The server has started sending the file.
+    InProgress {
+        started_at: u64,
+        file_size: u64,
+        sent: Arc<AtomicU64>,
+    },
+    /// The server has finished sending the file.
+    Finished { finished_at: u64, file_size: u64 },
+    /// The server failed to send the file.
     Failed { error: anyhow::Error },
 }
 
@@ -666,6 +748,12 @@ enum ServerCommand {
     Accept,
 
     Close,
+
+    /// Send a message to the client.
+    ///
+    /// This is sort of a hack, but it's used by the task that watches for
+    /// finished transcodes to send JobStatus messages to the client.
+    ServerMessage(ServerMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -675,28 +763,31 @@ struct ServerHandle {
     connected_at: u64,
 
     accepted: Arc<AtomicBool>,
-    jobs: Arc<DashMap<u64, TransferJob>>,
+    jobs: Arc<DashMap<u64, ServerTransferJob>>,
 }
 
 struct Server {
     db: Arc<Mutex<Database>>,
+    transcode_status_cache: TranscodeStatusCache,
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
 
     connected_at: u64,
 
     accepted: Arc<AtomicBool>,
-    jobs: Arc<DashMap<u64, TransferJob>>,
+    jobs: Arc<DashMap<u64, ServerTransferJob>>,
 }
 
 impl Server {
     fn new(
         db: Arc<Mutex<Database>>,
+        transcode_status_cache: TranscodeStatusCache,
         connection: Connection,
         handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     ) -> Self {
         Self {
             db,
+            transcode_status_cache,
             connection,
             handle_tx,
 
@@ -782,6 +873,11 @@ impl Server {
                             self.connection.close(0u32.into(), b"close");
                             return Ok(());
                         },
+                        ServerCommand::ServerMessage(message) => {
+                            send.send(message)
+                                .await
+                                .expect("failed to send ServerMessage");
+                        }
                     }
                 }
 
@@ -815,11 +911,73 @@ impl Server {
             .expect("failed to send Accepted message");
 
         // send Index message
-        // TODO: real index
         let index = self.get_index()?;
         send.send(ServerMessage::Index(index))
             .await
             .expect("failed to send Index message");
+
+        // spawn task to watch for finished transcodes
+        // TODO: shutdown signal
+        tokio::spawn({
+            let jobs = self.jobs.clone();
+            let transcode_status_cache = self.transcode_status_cache.clone();
+            async move {
+                loop {
+                    let mut ready_jobs = Vec::new();
+
+                    // check for jobs with Transcoding status
+                    for job in jobs.iter() {
+                        if let ServerTransferJobProgress::Transcoding { hash_kind, hash } =
+                            &job.value().progress
+                        {
+                            // get transcode status
+                            let Some(status) = transcode_status_cache.get(hash_kind, hash) else {
+                                continue;
+                            };
+
+                            // if transcode status is Ready, set job status to Ready
+                            if let TranscodeStatus::Ready {
+                                local_path,
+                                file_size,
+                            } = &*status
+                            {
+                                ready_jobs.push((*job.key(), local_path.clone(), *file_size));
+                            }
+                        }
+                    }
+
+                    if !ready_jobs.is_empty() {
+                        // update job statuses and create status change items
+                        let status_changes = ready_jobs
+                            .into_iter()
+                            .map(|(job_id, local_path, file_size)| {
+                                // set job status to Ready
+                                // needs to happen outside the loop, since jobs.iter() already holds the entry's lock
+                                jobs.alter(&job_id, |_, mut job| {
+                                    job.progress = ServerTransferJobProgress::Ready {
+                                        local_path,
+                                        file_size,
+                                    };
+                                    job
+                                });
+
+                                (job_id, JobStatusItem::Ready { file_size })
+                            })
+                            .collect::<HashMap<_, _>>();
+
+                        // send status changes to client via ServerCommand::ServerMessage
+                        if let Err(e) = tx.send(ServerCommand::ServerMessage(
+                            ServerMessage::JobStatus(status_changes),
+                        )) {
+                            log::warn!("transcode watcher failed to send JobStatus message: {e}");
+                        }
+                    }
+
+                    // sleep before checking again
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        });
 
         // main loop
         loop {
@@ -833,6 +991,11 @@ impl Server {
                             self.connection.close(0u32.into(), b"close");
                             break;
                         },
+                        ServerCommand::ServerMessage(message) => {
+                            send.send(message)
+                                .await
+                                .expect("failed to send ServerMessage");
+                        }
                     }
                 }
 
@@ -845,23 +1008,89 @@ impl Server {
                                 }
 
                                 ClientMessage::Download(items) => {
-                                    let ready = items.iter().map(|item| item.job_id).collect::<Vec<_>>();
+                                    // get file hashes
+                                    // TODO: this could be better
+                                    let files = {
+                                        let db = self.db.lock().expect("failed to lock database");
+                                        db.get_files_by_node_root_path(
+                                            items.iter().map(|item| (item.node_id, item.root.clone(), item.path.clone()))
+                                        )?.into_iter().map(|f| ((f.node_id, f.root.clone(), f.path.clone()), f)).collect::<HashMap<_, _>>()
+                                    };
 
-                                    for item in items {
-                                        self.jobs.insert(item.job_id, TransferJob {
-                                            started_at: unix_epoch_now_secs(),
-                                            file_node_id: item.node_id,
-                                            file_root: item.root,
-                                            file_path: item.path,
-                                            file_size: None,
-                                            progress: TransferJobProgress::Queued,
-                                        });
-                                    }
+                                    let status_changes = items.into_iter().map(|item| {
+                                        // TODO: wasteful clones
+                                        let file = files.get(&(item.node_id, item.root.clone(), item.path.clone()));
 
-                                    // TODO: check readiness (ie transcoding)
-                                    send.send(ServerMessage::JobReady(ready))
+                                        let Some(file) = file else {
+                                            self.jobs.insert(item.job_id, ServerTransferJob {
+                                                progress: ServerTransferJobProgress::Failed { error: anyhow::anyhow!("file not found") },
+                                                file_node_id: item.node_id,
+                                                file_root: item.root,
+                                                file_path: item.path,
+                                            });
+
+                                            return (item.job_id, JobStatusItem::Failed {
+                                                error: "file not found".to_string(),
+                                            });
+                                        };
+
+                                        // get transcode status
+                                        let transcode_status = self.transcode_status_cache.get(&file.hash_kind, &file.hash);
+
+                                        let Some(transcode_status) = transcode_status else {
+                                            // file exists, but transcode status is missing
+                                            log::warn!("file {}/{}/{} exists but transcode status is missing, defaulting to Queued",
+                                                item.node_id, item.root, item.path);
+
+                                            // create job
+                                            self.jobs.insert(item.job_id, ServerTransferJob {
+                                                progress: ServerTransferJobProgress::Transcoding { hash_kind: file.hash_kind.clone(), hash: file.hash.clone() },
+                                                file_node_id: item.node_id,
+                                                file_root: item.root,
+                                                file_path: item.path,
+                                            });
+
+                                            return (item.job_id, JobStatusItem::Transcoding);
+                                        };
+
+                                        match &*transcode_status {
+                                            TranscodeStatus::Queued => {
+                                                // file is queued for transcoding
+
+                                                // create job
+                                                self.jobs.insert(item.job_id, ServerTransferJob {
+                                                    progress: ServerTransferJobProgress::Transcoding { hash_kind: file.hash_kind.clone(), hash: file.hash.clone() },
+                                                    file_node_id: item.node_id,
+                                                    file_root: item.root,
+                                                    file_path: item.path,
+                                                });
+
+                                                (item.job_id, JobStatusItem::Transcoding)
+                                            }
+                                            TranscodeStatus::Ready { local_path, file_size } => {
+                                                // file is already transcoded
+
+                                                // create job
+                                                self.jobs.insert(item.job_id, ServerTransferJob {
+                                                    progress: ServerTransferJobProgress::Ready {
+                                                        local_path: local_path.clone(),
+                                                        file_size: *file_size,
+                                                    },
+                                                    file_node_id: item.node_id,
+                                                    file_root: item.root,
+                                                    file_path: item.path,
+                                                });
+
+                                                (item.job_id, JobStatusItem::Ready {
+                                                    file_size: *file_size,
+                                                })
+                                            }
+                                        }
+                                    }).collect::<HashMap<_, _>>();
+
+                                    send.send(ServerMessage::JobStatus(status_changes))
                                         .await
-                                        .expect("failed to send JobReady message");
+                                        .expect("failed to send JobStatus message");
                                 }
                             }
                         },
@@ -879,7 +1108,6 @@ impl Server {
                 accept_result = self.connection.accept_bi() => {
                     match accept_result {
                         Ok((mut send, mut recv)) => {
-                            let db = self.db.clone();
                             let jobs = self.jobs.clone();
                             tokio::spawn(async move {
                                 // receive transfer request with job id
@@ -894,81 +1122,68 @@ impl Server {
 
                                 log::info!("received transfer request for job id {}", transfer_req.job_id);
 
-                                // get details from job
-                                let (file_node_id, file_root, file_path) = {
+                                // check job status
+                                let (transfer_res, ready) = {
                                     let Some(job) = jobs.get(&transfer_req.job_id) else {
                                         anyhow::bail!("transfer request job id not found: {}", transfer_req.job_id);
                                     };
 
-                                    (
-                                        job.file_node_id,
-                                        job.file_root.clone(),
-                                        job.file_path.clone(),
-                                    )
+                                    match &job.progress {
+                                        ServerTransferJobProgress::Ready { local_path, file_size } => {
+                                            (TransferResponse::Ok { file_size: *file_size }, Some((local_path.clone(), *file_size)))
+                                        }
+                                        _ => {
+                                            (TransferResponse::Error { error: "job not ready".to_string() }, None)
+                                        }
+                                    }
                                 };
 
-                                // query database for file
-                                let file = {
-                                    let db = db.lock().unwrap();
-                                    db.get_file_by_node_root_path(
-                                        file_node_id,
-                                        &file_root,
-                                        &file_path,
-                                    )?.ok_or_else(|| anyhow::anyhow!("file not found in database"))?
+                                // send transfer response
+                                let transfer_res_buf = postcard::to_stdvec(&transfer_res)
+                                    .context("failed to serialize transfer response")?;
+                                send.write_u32(transfer_res_buf.len() as u32)
+                                    .await
+                                    .context("failed to write transfer response length")?;
+                                send.write_all(&transfer_res_buf)
+                                    .await
+                                    .context("failed to write transfer response")?;
+
+                                // TODO: could maybe be nicer
+                                let Some((local_path, file_size)) = ready else {
+                                    return Ok(());
                                 };
 
                                 // check local file exists
-                                let local_path = PathBuf::from(&file.local_path);
                                 if !local_path.exists() {
                                     // TODO: set job to failed and respond with error
-                                    anyhow::bail!("file at local_path does not exist: {}", file.local_path);
+                                    anyhow::bail!("file at local_path does not exist: {}", local_path.display());
                                 }
 
-                                // get file size
-                                let metadata = local_path.metadata().context("failed to get file metadata")?;
-                                let file_size = metadata.len();
+                                let sent_counter = Arc::new(AtomicU64::new(0));
 
-                                let written = Arc::new(AtomicU64::new(0));
-
-                                // set job status to in progress
-                                {
-                                    jobs.alter(&transfer_req.job_id, |_, mut job| {
-                                        job.file_size = Some(file_size);
-                                        job.progress = TransferJobProgress::InProgress { written: written.clone() };
-                                        job
-                                    });
-                                }
-
-                                // send download response with metadata
-                                let download_response = TransferResponse {
-                                    file_size,
-                                };
-                                let download_response_buf = postcard::to_stdvec(&download_response)
-                                    .context("failed to serialize download response")?;
-                                send.write_u32(download_response_buf.len() as u32)
-                                    .await
-                                    .context("failed to write download response length")?;
-                                send.write_all(&download_response_buf)
-                                    .await
-                                    .context("failed to write download response")?;
+                                // set job status to InProgress
+                                jobs.alter(&transfer_req.job_id, |_, mut job| {
+                                    job.progress = ServerTransferJobProgress::InProgress {
+                                        started_at: unix_epoch_now_secs(),
+                                        file_size,
+                                        sent: sent_counter.clone()
+                                    };
+                                    job
+                                });
 
                                 // read file to buffer
                                 // TODO: stream instead of reading into memory?
                                 let file_content = tokio::fs::read(local_path).await?;
 
                                 // TODO: handle errors during send
-                                let mut send_progress = WriteProgress::new(written.clone(), send);
+                                let mut send_progress = WriteProgress::new(sent_counter.clone(), send);
                                 send_progress.write_all(&file_content).await?;
 
-                                // mark job as finished
-                                {
-                                    jobs.alter(&transfer_req.job_id, |_, mut job| {
-                                        job.progress = TransferJobProgress::Finished { finished_at: unix_epoch_now_secs() };
-                                        job
-                                    });
-                                }
-
-                                log::info!("finished sending file content for {}/{}", file_root, file_path);
+                                // set job status to Finished
+                                jobs.alter(&transfer_req.job_id, |_, mut job| {
+                                    job.progress = ServerTransferJobProgress::Finished { finished_at: unix_epoch_now_secs(), file_size };
+                                    job
+                                });
 
                                 Ok::<(), anyhow::Error>(())
                             });
@@ -999,13 +1214,43 @@ impl Server {
             .into_iter()
             .map(|file| IndexItem {
                 node_id: file.node_id,
-                hash_kind: file.hash_kind,
-                hash: file.hash,
                 root: file.root,
                 path: file.path,
+
+                hash_kind: file.hash_kind,
+                hash: file.hash,
             })
             .collect())
     }
+}
+
+#[derive(Debug)]
+struct ClientTransferJob {
+    progress: ClientTransferJobProgress,
+
+    file_node_id: NodeId,
+    file_root: String,
+    file_path: String,
+}
+
+#[derive(Debug)]
+enum ClientTransferJobProgress {
+    /// The client sent the request and is waiting for its status.
+    Requested,
+    /// The client is waiting for the file to be transcoded.
+    Transcoding,
+    /// The client is ready to download the file.
+    Ready { file_size: u64 },
+    /// The client has started downloading the file.
+    InProgress {
+        started_at: u64,
+        file_size: u64,
+        written: Arc<AtomicU64>,
+    },
+    /// The client has finished downloading the file.
+    Finished { finished_at: u64, file_size: u64 },
+    /// The client failed to download the file.
+    Failed { error: String },
 }
 
 #[derive(Debug)]
@@ -1023,7 +1268,7 @@ struct ClientHandle {
 
     accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
-    jobs: Arc<DashMap<u64, TransferJob>>,
+    jobs: Arc<DashMap<u64, ClientTransferJob>>,
 }
 
 struct Client {
@@ -1037,7 +1282,7 @@ struct Client {
 
     accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
-    jobs: Arc<DashMap<u64, TransferJob>>,
+    jobs: Arc<DashMap<u64, ClientTransferJob>>,
 }
 
 impl Client {
@@ -1046,10 +1291,10 @@ impl Client {
         connection: Connection,
         download_directory: Arc<Mutex<Option<String>>>,
     ) -> Self {
-        let jobs = Arc::new(DashMap::<u64, TransferJob>::new());
+        let jobs = Arc::new(DashMap::<u64, ClientTransferJob>::new());
 
         // spawn a task to handle ready jobs and spawn more tasks to download them
-        // Client::run() receives ServerMessage::JobReady messages with ready job IDs and sends them to this channel
+        // Client::run() receives ServerMessage::JobStatus messages. jobs marked Ready are sent to this channel
         let (ready_tx, mut ready_rx) = mpsc::unbounded_channel::<u64>();
         tokio::spawn({
             let jobs = jobs.clone();
@@ -1083,7 +1328,7 @@ impl Client {
                             // check job exists and get details
                             let (file_node_id, file_root, file_path) = {
                                 let Some(job) = jobs.get(&job_id) else {
-                                    anyhow::bail!("received JobReady for unknown job ID {job_id}");
+                                    anyhow::bail!("received ready for unknown job ID {job_id}");
                                 };
 
                                 (
@@ -1099,32 +1344,46 @@ impl Client {
                             let (mut send, mut recv) = connection.open_bi().await?;
 
                             // send transfer request with job id
-                            let transfer_request = TransferRequest { job_id };
-                            let transfer_request_buf = postcard::to_stdvec(&transfer_request)
+                            let transfer_req = TransferRequest { job_id };
+                            let transfer_req_buf = postcard::to_stdvec(&transfer_req)
                                 .context("failed to serialize transfer request")?;
-                            send.write_u32(transfer_request_buf.len() as u32)
+                            send.write_u32(transfer_req_buf.len() as u32)
                                 .await
                                 .context("failed to write transfer request length")?;
-                            send.write_all(&transfer_request_buf)
+                            send.write_all(&transfer_req_buf)
                                 .await
                                 .context("failed to write transfer request")?;
 
                             // receive transfer response with metadata
-                            let transfer_response_len = recv.read_u32().await?;
-                            let mut transfer_response_buf = vec![0; transfer_response_len as usize];
-                            recv.read_exact(&mut transfer_response_buf)
+                            let transfer_res_len = recv.read_u32().await?;
+                            let mut transfer_res_buf = vec![0; transfer_res_len as usize];
+                            recv.read_exact(&mut transfer_res_buf)
                                 .await
                                 .context("failed to read transfer response")?;
-                            let transfer_response: TransferResponse =
-                                postcard::from_bytes(&transfer_response_buf)
+                            let transfer_res: TransferResponse =
+                                postcard::from_bytes(&transfer_res_buf)
                                     .context("failed to deserialize transfer response")?;
 
-                            // set file size in job and set progress to InProgress
+                            // check transfer response
+                            let file_size = match transfer_res {
+                                TransferResponse::Ok { file_size } => file_size,
+                                TransferResponse::Error { error } => {
+                                    // set job status to Failed
+                                    jobs.alter(&job_id, |_, mut job| {
+                                        job.progress = ClientTransferJobProgress::Failed { error };
+                                        job
+                                    });
+
+                                    return Ok(());
+                                }
+                            };
+
+                            // set job status to InProgress
                             let written = Arc::new(AtomicU64::new(0));
                             jobs.alter(&job_id, |_, mut job| {
-                                job.file_size = Some(transfer_response.file_size);
-
-                                job.progress = TransferJobProgress::InProgress {
+                                job.progress = ClientTransferJobProgress::InProgress {
+                                    started_at: unix_epoch_now_secs(),
+                                    file_size,
                                     written: written.clone(),
                                 };
 
@@ -1156,21 +1415,20 @@ impl Client {
 
                             // copy from stream to file
                             let mut file_progress = WriteProgress::new(written.clone(), file);
-                            tokio::io::copy(
-                                &mut recv.take(transfer_response.file_size),
-                                &mut file_progress,
-                            )
-                            .await?;
+                            tokio::io::copy(&mut recv.take(file_size), &mut file_progress).await?;
 
-                            // mark job as finished
+                            // TODO: handle errors above and update job status
+
+                            // set job status to Finished
                             jobs.alter(&job_id, |_, mut job| {
-                                job.progress = TransferJobProgress::Finished {
+                                job.progress = ClientTransferJobProgress::Finished {
                                     finished_at: unix_epoch_now_secs(),
+                                    file_size,
                                 };
                                 job
                             });
 
-                            log::debug!("saved file to {:?}", local_path);
+                            log::debug!("saved file to {local_path:?}");
 
                             Ok::<(), anyhow::Error>(())
                         }
@@ -1339,13 +1597,11 @@ impl Client {
                             let download_requests = index.clone().into_iter().map(|file| {
                                 let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
 
-                                self.jobs.insert(job_id, TransferJob {
-                                    started_at: unix_epoch_now_secs(),
+                                self.jobs.insert(job_id, ClientTransferJob {
+                                    progress: ClientTransferJobProgress::Requested,
                                     file_node_id: file.node_id,
                                     file_root: file.root.clone(),
                                     file_path: file.path.clone(),
-                                    file_size: None,
-                                    progress: TransferJobProgress::Queued,
                                 });
 
                                 DownloadItem {
@@ -1377,10 +1633,34 @@ impl Client {
                                     }
                                 }
 
-                                ServerMessage::JobReady(job_ids) => {
-                                    // send job ids to ready channel
-                                    for job_id in job_ids {
-                                        self.ready_tx.send(job_id).context("ready channel closed")?;
+                                ServerMessage::JobStatus(status_changes) => {
+                                    for (job_id, status) in status_changes {
+                                        match status {
+                                            JobStatusItem::Transcoding => {
+                                                // set job status to Transcoding
+                                                self.jobs.alter(&job_id, |_, mut job| {
+                                                    job.progress = ClientTransferJobProgress::Transcoding;
+                                                    job
+                                                });
+                                            },
+                                            JobStatusItem::Ready { file_size } => {
+                                                // set job status to Ready
+                                                self.jobs.alter(&job_id, |_, mut job| {
+                                                    job.progress = ClientTransferJobProgress::Ready { file_size };
+                                                    job
+                                                });
+
+                                                // send job id to ready channel
+                                                self.ready_tx.send(job_id).context("failed to send job id to ready channel")?;
+                                            },
+                                            JobStatusItem::Failed { error } => {
+                                                // set job status to Failed
+                                                self.jobs.alter(&job_id, |_, mut job| {
+                                                    job.progress = ClientTransferJobProgress::Failed { error };
+                                                    job
+                                                });
+                                            },
+                                        }
                                     }
                                 }
 

@@ -167,13 +167,14 @@ impl Core {
                     debug!("core: inside async runtime");
 
                     let db2 = db.clone();
-                    let (node, run_token) = match Node::new(secret_key, db2).await {
-                        Ok(x) => x,
-                        Err(e) => {
-                            error!("core: error creating node: {e:#}");
-                            return;
-                        }
-                    };
+                    let (node, run_token) =
+                        match Node::new(secret_key, db2, transcode_status_cache.clone()).await {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("core: error creating node: {e:#}");
+                                return;
+                            }
+                        };
 
                     debug!("core: inside async runtime - created node");
 

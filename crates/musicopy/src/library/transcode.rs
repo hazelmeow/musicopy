@@ -2,7 +2,10 @@ use anyhow::Context;
 use dashmap::DashMap;
 use rubato::{FftFixedIn, Resampler};
 use std::{
+    borrow::Borrow,
     fs::File,
+    hash::{Hash, Hasher},
+    ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -12,8 +15,80 @@ use symphonia::core::{
 };
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct CacheKey(String, Vec<u8>);
+/// The transcode status of a file.
+#[derive(Debug)]
+pub enum TranscodeStatus {
+    Queued,
+    Ready { local_path: PathBuf, file_size: u64 },
+}
+
+/// Helper trait for creating a borrowed hash key.
+///
+/// This is required because we can't use a tuple of borrowed parts, we need a
+/// borrowed tuple of parts. The trait object adds indirection but avoids
+/// needing to clone.
+///
+/// See https://stackoverflow.com/a/45795699
+trait HashKey {
+    fn hash_kind(&self) -> &str;
+    fn hash(&self) -> &[u8];
+}
+
+impl<'a> Borrow<dyn HashKey + 'a> for (String, Vec<u8>) {
+    fn borrow(&self) -> &(dyn HashKey + 'a) {
+        self
+    }
+}
+
+impl Hash for dyn HashKey + '_ {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash_kind().hash(state);
+        self.hash().hash(state);
+    }
+}
+
+impl PartialEq for dyn HashKey + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash_kind() == other.hash_kind() && self.hash() == other.hash()
+    }
+}
+
+impl Eq for dyn HashKey + '_ {}
+
+impl HashKey for (String, Vec<u8>) {
+    fn hash_kind(&self) -> &str {
+        &self.0
+    }
+
+    fn hash(&self) -> &[u8] {
+        &self.1
+    }
+}
+
+impl HashKey for (&str, &[u8]) {
+    fn hash_kind(&self) -> &str {
+        self.0
+    }
+
+    fn hash(&self) -> &[u8] {
+        self.1
+    }
+}
+
+/// A borrowed entry in the transcoding status cache.
+///
+/// This wraps a RwLockReadGuard for the DashMap entry.
+pub struct TranscodeStatusCacheEntry<'a>(
+    dashmap::mapref::one::Ref<'a, (String, Vec<u8>), TranscodeStatus>,
+);
+
+impl Deref for TranscodeStatusCacheEntry<'_> {
+    type Target = TranscodeStatus;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.value()
+    }
+}
 
 /// An in-memory cache of the transcoding status of files.
 ///
@@ -25,12 +100,24 @@ struct CacheKey(String, Vec<u8>);
 /// can happen at any time. This also accounts for multiple copies of the same
 /// file existing in the library.
 #[derive(Debug, Clone)]
-pub struct TranscodeStatusCache(Arc<DashMap<CacheKey, TranscodeStatus>>);
+pub struct TranscodeStatusCache(Arc<DashMap<(String, Vec<u8>), TranscodeStatus>>);
 
 impl TranscodeStatusCache {
     /// Create a new TranscodeStatusCache.
     pub fn new() -> Self {
         TranscodeStatusCache(Arc::new(DashMap::new()))
+    }
+
+    /// Gets a reference to an entry in the cache.
+    pub fn get(&self, hash_kind: &str, hash: &[u8]) -> Option<TranscodeStatusCacheEntry> {
+        self.0
+            .get(&(hash_kind, hash) as &dyn HashKey)
+            .map(TranscodeStatusCacheEntry)
+    }
+
+    /// Inserts a key and a value into the cache, replacing the old value.
+    pub fn insert(&self, hash_kind: String, hash: Vec<u8>, status: TranscodeStatus) {
+        self.0.insert((hash_kind, hash), status);
     }
 }
 
@@ -67,13 +154,6 @@ pub enum TranscodeCommand {
 
     /// Delete transcodes of files that aren't in the library anymore.
     CollectGarbage(Vec<u64>),
-}
-
-/// The transcode status of a file.
-#[derive(Debug)]
-pub enum TranscodeStatus {
-    Queued,
-    Done(PathBuf),
 }
 
 /// A pool of worker threads for transcoding files.
@@ -127,7 +207,7 @@ impl TranscodePool {
             .filter_map(|entry| match entry {
                 Ok(entry) => Some(entry),
                 Err(e) => {
-                    log::error!("failed to read entry in transcode cache directory: {}", e);
+                    log::error!("failed to read entry in transcode cache directory: {e:#}");
                     None
                 }
             })
@@ -145,17 +225,22 @@ impl TranscodePool {
             .collect::<Vec<_>>();
 
         // update status cache
-        for (path, hash_kind, hash) in items {
-            self.status_cache
-                .0
-                .insert(CacheKey(hash_kind, hash), TranscodeStatus::Done(path));
+        for (local_path, hash_kind, hash, file_size) in items {
+            self.status_cache.insert(
+                hash_kind,
+                hash,
+                TranscodeStatus::Ready {
+                    local_path,
+                    file_size,
+                },
+            );
         }
     }
 
     fn parse_transcodes_dir_entry(
         &self,
         entry: &std::fs::DirEntry,
-    ) -> anyhow::Result<(PathBuf, String, Vec<u8>)> {
+    ) -> anyhow::Result<(PathBuf, String, Vec<u8>, u64)> {
         // get entry file type
         let file_type = entry.file_type().context("failed to get file type")?;
 
@@ -164,8 +249,9 @@ impl TranscodePool {
             anyhow::bail!("entry is not a file");
         }
 
-        // parse file name as <hash kind>-<hash hex>.ext
         let path = entry.path();
+
+        // parse file name as <hash kind>-<hash hex>.ext
         let file_stem = path
             .file_stem()
             .context("file missing name")?
@@ -176,7 +262,13 @@ impl TranscodePool {
         let hash_kind = hash_kind.to_string();
         let hash = hex::decode(hash).context("failed to decode hash bytes")?;
 
-        Ok((path, hash_kind, hash))
+        // get file size
+        let file_size = path
+            .metadata()
+            .context("failed to get file metadata")?
+            .len();
+
+        Ok((path, hash_kind, hash, file_size))
     }
 
     pub async fn run(
@@ -201,15 +293,14 @@ impl TranscodePool {
                     match command {
                         TranscodeCommand::Add(transcode_add_items) => {
                             for item in transcode_add_items {
-                                // TODO: remove these clones
-                                let key = CacheKey(item.hash_kind.clone(), item.hash.clone());
-                                let status = self.status_cache.0.get(&key);
+                                let status = self.status_cache.get(&item.hash_kind, &item.hash);
                                 if status.is_none() {
                                     log::trace!("TranscodePool: queueing file {}", item.local_path.display());
 
                                     // set status to queued
-                                    self.status_cache.0.insert(
-                                        key,
+                                    self.status_cache.insert(
+                                        item.hash_kind.clone(),
+                                        item.hash.clone(),
                                         TranscodeStatus::Queued,
                                     );
 
@@ -297,11 +388,22 @@ impl TranscodeWorker {
                     output_path.display()
                 );
 
-                // set status to done
-                let key = CacheKey(job.hash_kind, job.hash);
-                status_cache
-                    .0
-                    .insert(key, TranscodeStatus::Done(output_path));
+                // get file size
+                // TODO: handle error more carefully
+                let file_size = output_path
+                    .metadata()
+                    .context("failed to get output file metadata")?
+                    .len();
+
+                // set status to Ready
+                status_cache.insert(
+                    job.hash_kind.clone(),
+                    job.hash.clone(),
+                    TranscodeStatus::Ready {
+                        local_path: output_path,
+                        file_size,
+                    },
+                );
             }
         }
 

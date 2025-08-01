@@ -226,31 +226,31 @@ impl<'a> App<'a> {
                     return vec![];
                 }
 
-                let (count_queued, count_inprogress, count_finished, count_failed) =
-                    server.transfer_jobs.iter().fold(
-                        (0, 0, 0, 0),
-                        |(queued, inprogress, finished, failed), job| match &job.progress {
-                            TransferJobProgressModel::Queued => {
-                                (queued + 1, inprogress, finished, failed)
-                            }
-                            TransferJobProgressModel::InProgress { .. } => {
-                                (queued, inprogress + 1, finished, failed)
-                            }
-                            TransferJobProgressModel::Finished { .. } => {
-                                (queued, inprogress, finished + 1, failed)
-                            }
-                            TransferJobProgressModel::Failed { .. } => {
-                                (queued, inprogress, finished, failed + 1)
-                            }
-                        },
-                    );
+                let mut count_transcoding = 0;
+                let mut count_ready = 0;
+                let mut count_inprogress = 0;
+                let mut count_finished = 0;
+                let mut count_failed = 0;
+
+                for job in &server.transfer_jobs {
+                    match &job.progress {
+                        TransferJobProgressModel::Requested => {}
+                        TransferJobProgressModel::Transcoding => count_transcoding += 1,
+                        TransferJobProgressModel::Ready => count_ready += 1,
+                        TransferJobProgressModel::InProgress { .. } => count_inprogress += 1,
+                        TransferJobProgressModel::Finished { .. } => count_finished += 1,
+                        TransferJobProgressModel::Failed { .. } => count_failed += 1,
+                    }
+                }
 
                 let mut job_lines = vec![Line::from(vec![
                     " - ".into(),
                     shorten_id(&server.node_id).blue(),
                     ": ".into(),
-                    count_queued.to_string().green(),
-                    " queued / ".into(),
+                    count_transcoding.to_string().green(),
+                    " transcoding / ".into(),
+                    count_ready.to_string().green(),
+                    " ready / ".into(),
                     count_inprogress.to_string().green(),
                     " in progress / ".into(),
                     count_finished.to_string().green(),
@@ -261,7 +261,9 @@ impl<'a> App<'a> {
 
                 // add lines for in-progress jobs
                 for job in &server.transfer_jobs {
-                    if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
+                    if let TransferJobProgressModel::InProgress { started_at, bytes } =
+                        &job.progress
+                    {
                         // calculate sizes in MB
                         let progress_mb = bytes.get() as f64 / 1_000_000.0;
                         let size_mb = job.file_size.unwrap_or(0) as f64 / 1_000_000.0;
@@ -274,7 +276,7 @@ impl<'a> App<'a> {
                         };
 
                         // calculate speed in MB/s
-                        let elapsed = now - job.started_at;
+                        let elapsed = now - *started_at;
                         let bytes_per_second = if elapsed > 0 {
                             (bytes.get() as f64) / (elapsed as f64)
                         } else {
@@ -288,13 +290,13 @@ impl<'a> App<'a> {
                             "/".blue(),
                             job.file_path.clone().blue(),
                             " [".green(),
-                            format!("{:.1}", progress_mb).green(),
+                            format!("{progress_mb:.1}").green(),
                             " MB/".green(),
-                            format!("{:.1}", size_mb).green(),
+                            format!("{size_mb:.1}").green(),
                             " MB ".green(),
-                            format!("{:.0}", progress_percent).green(),
+                            format!("{progress_percent:.0}").green(),
                             "% ".green(),
-                            format!("{:.2}", mbytes_per_second).green(),
+                            format!("{mbytes_per_second:.2}").green(),
                             " MB/s".green(),
                             "]".green(),
                         ]));
@@ -320,31 +322,34 @@ impl<'a> App<'a> {
                     return vec![];
                 }
 
-                let (count_queued, count_inprogress, count_finished, count_failed) =
-                    client.transfer_jobs.iter().fold(
-                        (0, 0, 0, 0),
-                        |(queued, inprogress, finished, failed), job| match &job.progress {
-                            TransferJobProgressModel::Queued => {
-                                (queued + 1, inprogress, finished, failed)
-                            }
-                            TransferJobProgressModel::InProgress { .. } => {
-                                (queued, inprogress + 1, finished, failed)
-                            }
-                            TransferJobProgressModel::Finished { .. } => {
-                                (queued, inprogress, finished + 1, failed)
-                            }
-                            TransferJobProgressModel::Failed { .. } => {
-                                (queued, inprogress, finished, failed + 1)
-                            }
-                        },
-                    );
+                let mut count_requested = 0;
+                let mut count_transcoding = 0;
+                let mut count_ready = 0;
+                let mut count_inprogress = 0;
+                let mut count_finished = 0;
+                let mut count_failed = 0;
+
+                for job in &client.transfer_jobs {
+                    match &job.progress {
+                        TransferJobProgressModel::Requested => count_requested += 1,
+                        TransferJobProgressModel::Transcoding => count_transcoding += 1,
+                        TransferJobProgressModel::Ready => count_ready += 1,
+                        TransferJobProgressModel::InProgress { .. } => count_inprogress += 1,
+                        TransferJobProgressModel::Finished { .. } => count_finished += 1,
+                        TransferJobProgressModel::Failed { .. } => count_failed += 1,
+                    }
+                }
 
                 let mut job_lines = vec![Line::from(vec![
                     " - ".into(),
                     shorten_id(&client.node_id).blue(),
                     ": ".into(),
-                    count_queued.to_string().green(),
-                    " queued / ".into(),
+                    count_requested.to_string().green(),
+                    " requested / ".into(),
+                    count_transcoding.to_string().green(),
+                    " transcoding / ".into(),
+                    count_ready.to_string().green(),
+                    " ready / ".into(),
                     count_inprogress.to_string().green(),
                     " in progress / ".into(),
                     count_finished.to_string().green(),
@@ -355,7 +360,9 @@ impl<'a> App<'a> {
 
                 // add lines for in-progress jobs
                 for job in &client.transfer_jobs {
-                    if let TransferJobProgressModel::InProgress { bytes } = &job.progress {
+                    if let TransferJobProgressModel::InProgress { started_at, bytes } =
+                        &job.progress
+                    {
                         // calculate sizes in MB
                         let progress_mb = bytes.get() as f64 / 1_000_000.0;
                         let size_mb = job.file_size.unwrap_or(0) as f64 / 1_000_000.0;
@@ -368,7 +375,7 @@ impl<'a> App<'a> {
                         };
 
                         // calculate speed in MB/s
-                        let elapsed = now - job.started_at;
+                        let elapsed = now - *started_at;
                         let bytes_per_second = if elapsed > 0 {
                             (bytes.get() as f64) / (elapsed as f64)
                         } else {
@@ -382,13 +389,13 @@ impl<'a> App<'a> {
                             "/".blue(),
                             job.file_path.clone().blue(),
                             " [".green(),
-                            format!("{:.1}", progress_mb).green(),
+                            format!("{progress_mb:.1}").green(),
                             " MB/".green(),
-                            format!("{:.1}", size_mb).green(),
+                            format!("{size_mb:.1}").green(),
                             " MB ".green(),
-                            format!("{:.0}", progress_percent).green(),
+                            format!("{progress_percent:.0}").green(),
                             "% ".green(),
-                            format!("{:.2}", mbytes_per_second).green(),
+                            format!("{mbytes_per_second:.2}").green(),
                             " MB/s".green(),
                             "]".green(),
                         ]));

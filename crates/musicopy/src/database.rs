@@ -1,5 +1,6 @@
 use anyhow::Context;
 use iroh::NodeId;
+use itertools::Itertools;
 use std::path::Path;
 
 pub struct Root {
@@ -263,6 +264,46 @@ impl Database {
         .expect("should bind parameters")
         .next()
         .transpose()
+    }
+
+    pub fn get_files_by_node_root_path(
+        &self,
+        keys: impl ExactSizeIterator<Item = (NodeId, String, String)>,
+    ) -> anyhow::Result<Vec<File>> {
+        if keys.len() == 0 {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = std::iter::repeat_n("(?, ?, ?)", keys.len()).join(", ");
+        let sql = format!(
+            "SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE (node_id, root, path) IN ({placeholders})"
+        );
+
+        let mut stmt = self.conn.prepare(&sql).expect("should prepare statement");
+
+        let params_flat = rusqlite::params_from_iter(keys.flat_map(|(node_id, root, path)| {
+            let node_id_string = node_id_to_string(&node_id);
+            [node_id_string, root, path]
+        }));
+
+        stmt.query_and_then(params_flat, |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(3)?).context("failed to parse node id")?;
+            let node_id =
+                NodeId::try_from(node_id.as_slice()).context("failed to parse node id")?;
+
+            Ok(File {
+                id: row.get(0)?,
+                hash_kind: row.get(1)?,
+                hash: row.get(2)?,
+                node_id,
+                root: row.get(4)?,
+                path: row.get(5)?,
+                local_path: row.get(6)?,
+            })
+        })
+        .expect("should bind parameters")
+        .collect()
     }
 }
 
