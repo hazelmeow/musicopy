@@ -271,6 +271,21 @@ impl<'a> App<'a> {
                 }
             }
 
+            "t" | "trust" => {
+                app_log!("accepting and trusting pending servers");
+
+                let Some(model) = &self.model else {
+                    anyhow::bail!("model not initialized");
+                };
+
+                for server in &model.node.servers {
+                    if !server.accepted {
+                        app_log!("accepting and trusting server: {}", server.node_id);
+                        self.core.accept_connection_and_trust(&server.node_id)?;
+                    }
+                }
+            }
+
             "c" | "connect" => {
                 if parts.len() < 2 {
                     anyhow::bail!("usage: connect <node_id>");

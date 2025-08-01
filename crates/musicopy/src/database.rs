@@ -79,6 +79,13 @@ impl Database {
             )",
             [],
         )?;
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS trusted_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL UNIQUE
+            )",
+            [],
+        )?;
         Ok(())
     }
 
@@ -304,6 +311,37 @@ impl Database {
         })
         .expect("should bind parameters")
         .collect()
+    }
+
+    pub fn get_trusted_nodes(&self) -> anyhow::Result<Vec<NodeId>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT node_id FROM trusted_nodes")
+            .expect("should prepare statement");
+
+        stmt.query_and_then([], |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(0)?).context("failed to parse node id")?;
+            NodeId::try_from(node_id.as_slice()).context("failed to parse node id")
+        })
+        .expect("should bind parameters")
+        .collect()
+    }
+
+    pub fn add_trusted_node(&self, node_id: NodeId) -> anyhow::Result<()> {
+        let node_id = node_id_to_string(&node_id);
+        self.conn.execute(
+            "INSERT INTO trusted_nodes (node_id) VALUES (?) ON CONFLICT(node_id) DO NOTHING",
+            [&node_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_trusted_node(&self, node_id: NodeId) -> anyhow::Result<()> {
+        let node_id = node_id_to_string(&node_id);
+        self.conn
+            .execute("DELETE FROM trusted_nodes WHERE node_id = ?", [&node_id])?;
+        Ok(())
     }
 }
 

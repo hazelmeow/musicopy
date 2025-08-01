@@ -136,6 +136,14 @@ impl<'a> App<'a> {
             return;
         };
 
+        let trusted_nodes = model
+            .node
+            .trusted_nodes
+            .iter()
+            .map(shorten_id)
+            .collect::<Vec<_>>()
+            .join(", ");
+
         let active_servers = model
             .node
             .servers
@@ -180,6 +188,8 @@ impl<'a> App<'a> {
                 "Home Relay: ".into(),
                 model.node.home_relay.clone().yellow(),
             ]),
+            Line::from(""),
+            Line::from(vec!["Trusted Nodes: ".into(), trusted_nodes.yellow()]),
             Line::from(""),
             Line::from(vec!["Pending Servers: ".into(), pending_servers.yellow()]),
             Line::from(vec!["Active Servers: ".into(), active_servers.yellow()]),

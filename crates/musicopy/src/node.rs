@@ -24,7 +24,7 @@ use iroh::{
 use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -144,6 +144,8 @@ pub struct NodeModel {
 
     pub servers: Vec<ServerModel>,
     pub clients: Vec<ClientModel>,
+
+    pub trusted_nodes: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -162,6 +164,9 @@ pub enum NodeCommand {
         client: NodeId,
     },
 
+    TrustNode(NodeId),
+    UntrustNode(NodeId),
+
     Stop,
 }
 
@@ -179,6 +184,8 @@ pub struct Node {
     clients: Mutex<HashMap<NodeId, ClientHandle>>,
 
     download_directory: Arc<Mutex<Option<String>>>,
+
+    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
 }
 
 #[derive(Debug)]
@@ -194,6 +201,13 @@ impl Node {
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
+        // get trusted nodes from db
+        let trusted_nodes = {
+            let db = db.lock().unwrap();
+            let trusted_nodes = db.get_trusted_nodes()?;
+            Arc::new(Mutex::new(trusted_nodes.into_iter().collect()))
+        };
+
         let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
         let (server_closed_tx, server_closed_rx) = mpsc::unbounded_channel();
         let (client_handle_tx, client_handle_rx) = mpsc::unbounded_channel();
@@ -206,6 +220,7 @@ impl Node {
         let protocol = Protocol::new(
             db.clone(),
             transcode_status_cache.clone(),
+            trusted_nodes.clone(),
             server_handle_tx,
             server_closed_tx,
         );
@@ -227,6 +242,8 @@ impl Node {
             clients: Mutex::new(HashMap::new()),
 
             download_directory: Arc::new(Mutex::new(None)),
+
+            trusted_nodes,
         });
 
         let node_run = NodeRunToken {
@@ -304,6 +321,37 @@ impl Node {
                                 log::error!("DownloadAll: no client found with node_id: {client}");
                             }
                         },
+
+                        NodeCommand::TrustNode(node_id) => {
+                            // add to in-memory list
+                            {
+                                let mut trusted_nodes = self.trusted_nodes.lock().unwrap();
+                                trusted_nodes.insert(node_id);
+                            }
+
+                            // persist to database
+                            {
+                                let db = self.db.lock().unwrap();
+                                if let Err(e) = db.add_trusted_node(node_id) {
+                                    log::error!("failed to add trusted node to database: {e:#}");
+                                }
+                            }
+                        }
+                        NodeCommand::UntrustNode(node_id) => {
+                            // remove from in-memory list
+                            {
+                                let mut trusted_nodes = self.trusted_nodes.lock().unwrap();
+                                trusted_nodes.remove(&node_id);
+                            }
+
+                            // persist to database
+                            {
+                                let db = self.db.lock().unwrap();
+                                if let Err(e) = db.remove_trusted_node(node_id) {
+                                    log::error!("failed to remove trusted node from database: {e:#}");
+                                }
+                            }
+                        }
 
                         NodeCommand::Stop => break,
                     }
@@ -581,6 +629,14 @@ impl Node {
             clients
         };
 
+        let trusted_nodes = {
+            let trusted_nodes = self.trusted_nodes.lock().unwrap();
+            trusted_nodes
+                .iter()
+                .map(|node_id| node_id.to_string())
+                .collect()
+        };
+
         NodeModel {
             node_id: self.router.endpoint().node_id().to_string(),
             home_relay,
@@ -596,6 +652,8 @@ impl Node {
 
             servers,
             clients,
+
+            trusted_nodes,
         }
     }
 }
@@ -604,6 +662,8 @@ impl Node {
 struct Protocol {
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
+    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
+
     server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     server_closed_tx: mpsc::UnboundedSender<NodeId>,
 }
@@ -614,12 +674,16 @@ impl Protocol {
     fn new(
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
+        trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
+
         server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
         server_closed_tx: mpsc::UnboundedSender<NodeId>,
     ) -> Self {
         Self {
             db,
             transcode_status_cache,
+            trusted_nodes,
+
             server_handle_tx,
             server_closed_tx,
         }
@@ -630,13 +694,22 @@ impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
         let transcode_status_cache = self.transcode_status_cache.clone();
+        let trusted_nodes = self.trusted_nodes.clone();
+
         let server_handle_tx = self.server_handle_tx.clone();
         let server_closed_tx = self.server_closed_tx.clone();
+
         Box::pin(async move {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
 
-            let server = Server::new(db, transcode_status_cache, connection, server_handle_tx);
+            let server = Server::new(
+                db,
+                transcode_status_cache,
+                trusted_nodes,
+                connection,
+                server_handle_tx,
+            );
             server.run().await?;
 
             // remove handle from hashmap
@@ -769,6 +842,8 @@ struct ServerHandle {
 struct Server {
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
+    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
+
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
 
@@ -782,12 +857,16 @@ impl Server {
     fn new(
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
+        trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
+
         connection: Connection,
         handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     ) -> Self {
         Self {
             db,
             transcode_status_cache,
+            trusted_nodes,
+
             connection,
             handle_tx,
 
@@ -860,44 +939,57 @@ impl Server {
             ))
             .expect("failed to send server handle");
 
-        // waiting loop, wait for user to accept or deny the connection
-        loop {
-            tokio::select! {
-                Some(command) = rx.recv() => {
-                    match command {
-                        ServerCommand::Accept => {
-                            // continue to next state
-                            break;
-                        },
-                        ServerCommand::Close => {
-                            self.connection.close(0u32.into(), b"close");
-                            return Ok(());
-                        },
-                        ServerCommand::ServerMessage(message) => {
-                            send.send(message)
-                                .await
-                                .expect("failed to send ServerMessage");
+        // check if remote node is trusted
+        let is_trusted = {
+            let trusted_nodes = self.trusted_nodes.lock().unwrap();
+            trusted_nodes.contains(&remote_node_id)
+        };
+
+        if is_trusted {
+            log::info!("accepting connection from trusted node {remote_node_id}");
+        } else {
+            // waiting loop, wait for user to accept or deny the connection
+            log::info!(
+                "waiting for accept or deny of connection from untrusted node {remote_node_id}",
+            );
+            loop {
+                tokio::select! {
+                    Some(command) = rx.recv() => {
+                        match command {
+                            ServerCommand::Accept => {
+                                // continue to next state
+                                break;
+                            },
+                            ServerCommand::Close => {
+                                self.connection.close(0u32.into(), b"close");
+                                return Ok(());
+                            },
+                            ServerCommand::ServerMessage(message) => {
+                                send.send(message)
+                                    .await
+                                    .expect("failed to send ServerMessage");
+                            }
                         }
                     }
-                }
 
-                next_message = recv.next() => {
-                    match next_message {
-                        Some(Ok(message)) => {
-                            log::debug!("unexpected message (not accepted): {message:?}");
-                        },
-                        Some(Err(e)) => {
-                            log::error!("error receiving message: {e}");
-                        },
-                        None => {
-                            log::info!("control stream closed, shutting down server");
-                            return Ok(());
-                        },
+                    next_message = recv.next() => {
+                        match next_message {
+                            Some(Ok(message)) => {
+                                log::debug!("unexpected message (not accepted): {message:?}");
+                            },
+                            Some(Err(e)) => {
+                                log::error!("error receiving message: {e}");
+                            },
+                            None => {
+                                log::info!("control stream closed, shutting down server");
+                                return Ok(());
+                            },
+                        }
                     }
-                }
 
-                else => {
-                    anyhow::bail!("stream and receiver closed while waiting for Accept");
+                    else => {
+                        anyhow::bail!("stream and receiver closed while waiting for Accept");
+                    }
                 }
             }
         }

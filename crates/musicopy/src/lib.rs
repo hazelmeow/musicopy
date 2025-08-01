@@ -290,6 +290,20 @@ impl Core {
         Ok(())
     }
 
+    pub fn accept_connection_and_trust(&self, node_id: &str) -> Result<(), CoreError> {
+        let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
+
+        self.node_tx
+            .send(NodeCommand::AcceptConnection(node_id))
+            .context("failed to send to node thread")?;
+
+        self.node_tx
+            .send(NodeCommand::TrustNode(node_id))
+            .context("failed to send to node thread")?;
+
+        Ok(())
+    }
+
     pub fn deny_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
