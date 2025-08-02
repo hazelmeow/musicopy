@@ -7,6 +7,7 @@ use std::{
     collections::{HashSet, VecDeque},
     fs::File,
     hash::{Hash, Hasher},
+    io::{Seek, SeekFrom},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -564,36 +565,52 @@ impl TranscodeWorker {
                 transcodes_dir.join(format!("{}-{}.tmp", job.hash_kind, hex::encode(&job.hash)));
 
             log::info!("transcoding file: {}", job.local_path.display());
-            if let Err(e) = transcode(&job.local_path, &temp_path) {
-                log::error!(
-                    "failed to transcode file: {} -> {}: {e:#}",
-                    job.local_path.display(),
-                    temp_path.display()
-                );
+            let file_size = match transcode(&job.local_path, &temp_path) {
+                Ok(file_size) => file_size,
 
-                // try to remove the temp file
-                let _ = std::fs::remove_file(&temp_path);
+                Err(e) => {
+                    log::error!(
+                        "failed to transcode file: {} -> {}: {e:#}",
+                        job.local_path.display(),
+                        temp_path.display()
+                    );
+
+                    // try to remove the temp file
+                    let _ = std::fs::remove_file(&temp_path);
+
+                    // set status to Failed
+                    status_cache.insert(
+                        job.hash_kind.clone(),
+                        job.hash.clone(),
+                        TranscodeStatus::Failed { error: e },
+                    );
+
+                    // next job
+                    continue;
+                }
+            };
+
+            // rename the temp file
+            let final_path = temp_path.with_extension("ogg");
+            if let Err(e) = std::fs::rename(&temp_path, &final_path) {
+                log::error!(
+                    "failed to rename temp file: {} -> {}: {e:#}",
+                    temp_path.display(),
+                    final_path.display()
+                );
 
                 // set status to Failed
                 status_cache.insert(
                     job.hash_kind.clone(),
                     job.hash.clone(),
-                    TranscodeStatus::Failed { error: e },
+                    TranscodeStatus::Failed {
+                        error: anyhow::anyhow!("failed to rename temp file: {e:#}"),
+                    },
                 );
 
                 // next job
                 continue;
-            }
-
-            // get file size
-            let file_size = temp_path
-                .metadata()
-                .context("failed to get output file size")?
-                .len();
-
-            // rename the temp file
-            let final_path = temp_path.with_extension("ogg");
-            std::fs::rename(&temp_path, &final_path).context("failed to rename temp file")?;
+            };
 
             log::info!(
                 "finished transcoding file: {} -> {}",
@@ -656,7 +673,10 @@ impl Drop for RegionCounterGuard<'_> {
     }
 }
 
-fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
+/// Transcode a file.
+///
+/// Returns the file size of the output file.
+fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
     let input_file = File::open(input_path).context("failed to open input file")?;
 
     let mss = MediaSourceStream::new(Box::new(input_file), Default::default());
@@ -1012,8 +1032,13 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
             .context("failed to write packet")?;
     }
 
+    let file = packet_writer.into_inner();
+    let file_size = file
+        .seek(SeekFrom::End(0))
+        .context("failed to seek to end of file")?;
+
     // we did it
-    Ok(())
+    Ok(file_size)
 }
 
 #[cfg(test)]
