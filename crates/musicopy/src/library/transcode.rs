@@ -144,10 +144,66 @@ impl Default for TranscodeStatusCache {
 }
 
 /// An item in the transcoding queue.
+#[derive(Debug, Clone)]
 pub struct TranscodeItem {
     pub hash_kind: String,
     pub hash: Vec<u8>,
     pub local_path: PathBuf,
+}
+
+/// The queue of items to be transcoded.
+#[derive(Debug, Clone)]
+struct TranscodeQueue {
+    items: Arc<Mutex<VecDeque<TranscodeItem>>>,
+    ready: Arc<Condvar>,
+}
+
+impl TranscodeQueue {
+    /// Creates a new TranscodeQueue.
+    pub fn new() -> Self {
+        TranscodeQueue {
+            items: Arc::new(Mutex::new(VecDeque::new())),
+            ready: Arc::new(Condvar::new()),
+        }
+    }
+
+    /// Adds items to the queue.
+    pub fn extend(&self, items: Vec<TranscodeItem>) {
+        {
+            let mut queue = self.items.lock().unwrap();
+            queue.extend(items);
+        }
+
+        self.ready.notify_all();
+    }
+
+    /// Removes items from the queue.
+    pub fn remove(&self, items: Vec<TranscodeItem>) {
+        let hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(
+            items
+                .iter()
+                .map(|item| (item.hash_kind.as_str(), item.hash.as_slice())),
+        );
+
+        {
+            let mut items = self.items.lock().unwrap();
+            items.retain(|item| !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())));
+        }
+    }
+
+    /// Waits for a job and takes it from the queue.
+    pub fn wait(&self) -> TranscodeItem {
+        let mut items = self.items.lock().unwrap();
+        loop {
+            // check for a job
+            if let Some(item) = items.pop_front() {
+                return item;
+            }
+
+            // no job, wait for notification
+            items = self.ready.wait(items).unwrap();
+        }
+    }
 }
 
 /// A command sent to the transcoding pool.
@@ -177,8 +233,7 @@ pub struct TranscodePool {
     transcodes_dir: PathBuf,
     status_cache: TranscodeStatusCache,
 
-    queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
-    queue_condvar: Arc<Condvar>,
+    queue: TranscodeQueue,
 
     inprogress_counter: RegionCounter,
 }
@@ -193,8 +248,7 @@ impl TranscodePool {
             transcodes_dir,
             status_cache,
 
-            queue: Arc::new(Mutex::new(VecDeque::new())),
-            queue_condvar: Arc::new(Condvar::new()),
+            queue: TranscodeQueue::new(),
 
             inprogress_counter: RegionCounter::new(),
         };
@@ -326,7 +380,6 @@ impl TranscodePool {
                 self.transcodes_dir.clone(),
                 self.status_cache.clone(),
                 self.queue.clone(),
-                self.queue_condvar.clone(),
                 self.inprogress_counter.clone(),
             );
         }
@@ -359,13 +412,7 @@ impl TranscodePool {
                                 }
 
                                 // add items to queue
-                                {
-                                    let mut queue = self.queue.lock().unwrap();
-                                    queue.extend(transcode_add_items);
-                                }
-
-                                // notify workers of new items
-                                self.queue_condvar.notify_all();
+                                self.queue.extend(transcode_add_items);
                             }
                         },
                         TranscodeCommand::Prioritize(items) => {
@@ -382,15 +429,7 @@ impl TranscodePool {
                             }
 
                             // remove items from queue
-                            let remove_hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(
-                                items.iter().map(|item| (item.hash_kind.as_str(), item.hash.as_slice())),
-                            );
-                            {
-                                let mut queue = self.queue.lock().unwrap();
-                                queue.retain(|item| {
-                                    !remove_hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice()))
-                                });
-                            }
+                            self.queue.remove(items);
                         },
                         TranscodeCommand::CollectGarbage(items) => todo!(),
                     }
@@ -407,18 +446,11 @@ impl TranscodeWorker {
     pub fn new(
         transcodes_dir: PathBuf,
         status_cache: TranscodeStatusCache,
-        queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
-        queue_condvar: Arc<Condvar>,
+        queue: TranscodeQueue,
         inprogress_counter: RegionCounter,
     ) -> Self {
         std::thread::spawn(move || {
-            if let Err(e) = Self::run(
-                transcodes_dir,
-                status_cache,
-                queue,
-                queue_condvar,
-                inprogress_counter,
-            ) {
+            if let Err(e) = Self::run(transcodes_dir, status_cache, queue, inprogress_counter) {
                 log::error!("transcode worker failed: {e:#}");
             }
         });
@@ -430,24 +462,12 @@ impl TranscodeWorker {
     fn run(
         transcodes_dir: PathBuf,
         status_cache: TranscodeStatusCache,
-        queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
-        queue_condvar: Arc<Condvar>,
+        queue: TranscodeQueue,
         inprogress_counter: RegionCounter,
     ) -> anyhow::Result<()> {
         loop {
             // wait for a job
-            let job = {
-                let mut queue = queue.lock().unwrap();
-                loop {
-                    // check for a job
-                    if let Some(item) = queue.pop_front() {
-                        break item;
-                    }
-
-                    // no job, wait for notification
-                    queue = queue_condvar.wait(queue).unwrap();
-                }
-            };
+            let job = queue.wait();
 
             // mark thread as in-progress
             let _counter_guard = inprogress_counter.entered();
@@ -907,4 +927,146 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<()> {
 
     // we did it
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_item(hash: u8) -> TranscodeItem {
+        TranscodeItem {
+            hash_kind: "test".to_string(),
+            hash: vec![hash],
+            local_path: PathBuf::from("test.ogg"),
+        }
+    }
+
+    fn join_timeout<T>(timeout: std::time::Duration, thread: std::thread::JoinHandle<T>) -> T {
+        let now = std::time::Instant::now();
+
+        while now.elapsed() < timeout {
+            if thread.is_finished() {
+                return thread.join().unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        panic!("thread timed out");
+    }
+
+    #[test]
+    fn test_region_counter() {
+        let counter = RegionCounter::new();
+        assert_eq!(counter.count(), 0);
+
+        let guard_1 = counter.entered();
+        assert_eq!(counter.count(), 1);
+
+        let guard_2 = counter.entered();
+        assert_eq!(counter.count(), 2);
+
+        drop(guard_2);
+        assert_eq!(counter.count(), 1);
+
+        drop(guard_1);
+        assert_eq!(counter.count(), 0);
+    }
+
+    #[test]
+    fn test_queue_wait_after() {
+        let queue = TranscodeQueue::new();
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        queue.extend(vec![item_1, item_2]);
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // wait after adding item
+        let thread = std::thread::spawn(move || {
+            let item = queue.wait();
+            assert_eq!(item.hash, [0x01]);
+            let item = queue.wait();
+            assert_eq!(item.hash, [0x02]);
+        });
+
+        join_timeout(std::time::Duration::from_secs(1), thread);
+    }
+
+    #[test]
+    fn test_queue_wait_before() {
+        let queue = TranscodeQueue::new();
+
+        // wait before before item
+        let thread = std::thread::spawn({
+            let queue = queue.clone();
+            move || {
+                let item = queue.wait();
+                assert_eq!(item.hash, vec![0x01]);
+                let item = queue.wait();
+                assert_eq!(item.hash, vec![0x02]);
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        queue.extend(vec![item_1, item_2]);
+
+        join_timeout(std::time::Duration::from_secs(1), thread);
+    }
+
+    #[test]
+    fn test_queue_wait_parallel() {
+        let queue = TranscodeQueue::new();
+
+        // spawn consumer threads
+        let thread_1 = std::thread::spawn({
+            let queue = queue.clone();
+            move || {
+                queue.wait();
+            }
+        });
+        let thread_2 = std::thread::spawn({
+            let queue = queue.clone();
+            move || {
+                queue.wait();
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        queue.extend(vec![item_1, item_2]);
+
+        join_timeout(std::time::Duration::from_secs(1), thread_1);
+        join_timeout(std::time::Duration::from_secs(1), thread_2);
+    }
+
+    #[test]
+    fn test_queue_remove() {
+        let queue = TranscodeQueue::new();
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        // wait for next
+        let item = queue.wait();
+        assert_eq!(item.hash, vec![0x01]);
+
+        // remove 2 from queue
+        queue.remove(vec![item_2]);
+
+        // wait for next
+        let item = queue.wait();
+        assert_eq!(item.hash, vec![0x03]);
+    }
 }
