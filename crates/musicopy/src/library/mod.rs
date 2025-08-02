@@ -3,6 +3,7 @@ pub mod transcode;
 use crate::{
     database::{Database, InsertFile},
     library::transcode::{TranscodeCommand, TranscodeItem, TranscodePool, TranscodeStatusCache},
+    model::CounterModel,
 };
 use anyhow::Context;
 use iroh::NodeId;
@@ -19,7 +20,6 @@ use symphonia::core::{
     io::MediaSourceStream,
     meta::MetadataOptions,
 };
-use tokio::sync::mpsc;
 use twox_hash::XxHash3_64;
 
 #[derive(Debug, uniffi::Record)]
@@ -32,6 +32,11 @@ pub struct LibraryRootModel {
 #[derive(Debug, uniffi::Record)]
 pub struct LibraryModel {
     pub local_roots: Vec<LibraryRootModel>,
+
+    pub transcode_count_queued: Arc<CounterModel>,
+    pub transcode_count_inprogress: Arc<CounterModel>,
+    pub transcode_count_ready: Arc<CounterModel>,
+    pub transcode_count_failed: Arc<CounterModel>,
 }
 
 #[derive(Debug)]
@@ -47,7 +52,7 @@ pub struct Library {
     db: Arc<Mutex<Database>>,
     local_node_id: NodeId,
 
-    transcode_tx: mpsc::UnboundedSender<TranscodeCommand>,
+    transcode_pool: TranscodePool,
 }
 
 impl Library {
@@ -58,18 +63,12 @@ impl Library {
         transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<Arc<Self>> {
         // spawn transcode pool task
-        let transcode_pool = TranscodePool::new(transcodes_dir, transcode_status_cache);
-        let (transcode_tx, transcode_rx) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            if let Err(e) = transcode_pool.run(transcode_rx).await {
-                log::error!("error running transcode pool: {e:#}");
-            }
-        });
+        let transcode_pool = TranscodePool::spawn(transcodes_dir, transcode_status_cache);
 
         let library = Arc::new(Self {
             db,
             local_node_id,
-            transcode_tx,
+            transcode_pool,
         });
 
         // send all local files to the transcode pool to be transcoded if needed
@@ -310,9 +309,8 @@ impl Library {
                 })
                 .collect::<Vec<_>>();
 
-            self.transcode_tx
-                .send(TranscodeCommand::Add(transcode_add_items))
-                .context("failed to send transcode command")?;
+            self.transcode_pool
+                .send(TranscodeCommand::Add(transcode_add_items))?;
         }
 
         // TODO
@@ -338,9 +336,8 @@ impl Library {
             })
             .collect::<Vec<_>>();
 
-        self.transcode_tx
-            .send(TranscodeCommand::Add(transcode_add_items))
-            .context("failed to send transcode command")?;
+        self.transcode_pool
+            .send(TranscodeCommand::Add(transcode_add_items))?;
 
         Ok(())
     }
@@ -365,7 +362,14 @@ impl Library {
                 .collect()
         };
 
-        LibraryModel { local_roots }
+        LibraryModel {
+            local_roots,
+            
+            transcode_count_queued: Arc::new(self.transcode_pool.queued_count_model()),
+            transcode_count_inprogress: Arc::new(self.transcode_pool.inprogress_count_model()),
+            transcode_count_ready: Arc::new(self.transcode_pool.ready_count_model()),
+            transcode_count_failed: Arc::new(self.transcode_pool.failed_count_model()),
+        }
     }
 }
 

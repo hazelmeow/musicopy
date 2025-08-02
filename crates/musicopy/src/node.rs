@@ -12,6 +12,7 @@ use crate::{
     database::Database,
     fs::{OpenMode, TreeFile, TreePath},
     library::transcode::{TranscodeStatus, TranscodeStatusCache},
+    model::CounterModel,
 };
 use anyhow::Context;
 use dashmap::DashMap;
@@ -42,21 +43,6 @@ use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
-#[derive(Debug, uniffi::Object)]
-pub struct ProgressCounterModel(Arc<AtomicU64>);
-
-#[uniffi::export]
-impl ProgressCounterModel {
-    #[uniffi::constructor]
-    pub fn new(n: u64) -> Self {
-        Self(Arc::new(AtomicU64::new(n)))
-    }
-
-    pub fn get(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
 /// Model of progress for a transfer job.
 #[derive(Debug, uniffi::Enum)]
 pub enum TransferJobProgressModel {
@@ -66,7 +52,7 @@ pub enum TransferJobProgressModel {
     InProgress {
         started_at: u64,
         /// Number of bytes written so far.
-        bytes: Arc<ProgressCounterModel>,
+        bytes: Arc<CounterModel>,
     },
     Finished {
         finished_at: u64,
@@ -463,7 +449,7 @@ impl Node {
                                     } => (
                                         TransferJobProgressModel::InProgress {
                                             started_at: *started_at,
-                                            bytes: Arc::new(ProgressCounterModel(sent.clone())),
+                                            bytes: Arc::new(CounterModel::from(sent)),
                                         },
                                         Some(*file_size),
                                     ),
@@ -576,7 +562,7 @@ impl Node {
                                     } => (
                                         TransferJobProgressModel::InProgress {
                                             started_at: *started_at,
-                                            bytes: Arc::new(ProgressCounterModel(written.clone())),
+                                            bytes: Arc::new(CounterModel::from(written)),
                                         },
                                         Some(*file_size),
                                     ),

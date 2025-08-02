@@ -200,26 +200,61 @@ impl<'a> App<'a> {
             Line::from("Library".bold()),
         ];
 
-        // library help text if empty
         if model.library.local_roots.is_empty() {
+            // library help text if empty
             lines.push(Line::from(vec![
                 "Empty, add a path using ".into(),
                 ":addlibrary <name> <path>".blue(),
             ]));
-        }
+        } else {
+            // library roots
+            lines.extend(model.library.local_roots.iter().map(|root| {
+                Line::from(vec![
+                    " - ".into(),
+                    root.name.clone().blue(),
+                    ": ".into(),
+                    root.path.clone().blue(),
+                    " (".green(),
+                    root.num_files.to_string().green(),
+                    ")".green(),
+                ])
+            }));
 
-        // library roots
-        lines.extend(model.library.local_roots.iter().map(|root| {
-            Line::from(vec![
-                " - ".into(),
-                root.name.clone().blue(),
-                ": ".into(),
-                root.path.clone().blue(),
-                " (".green(),
-                root.num_files.to_string().green(),
-                ")".green(),
+            lines.extend(vec![
+                Line::from(""),
+                Line::from(vec![
+                    "Transcodes: ".into(),
+                    model
+                        .library
+                        .transcode_count_queued
+                        .get()
+                        .to_string()
+                        .green(),
+                    " queued / ".into(),
+                    model
+                        .library
+                        .transcode_count_inprogress
+                        .get()
+                        .to_string()
+                        .green(),
+                    " in progress / ".into(),
+                    model
+                        .library
+                        .transcode_count_ready
+                        .get()
+                        .to_string()
+                        .green(),
+                    " ready / ".into(),
+                    model
+                        .library
+                        .transcode_count_failed
+                        .get()
+                        .to_string()
+                        .green(),
+                    " failed".into(),
+                ]),
             ])
-        }));
+        }
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)

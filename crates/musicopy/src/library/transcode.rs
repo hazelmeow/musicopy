@@ -1,3 +1,4 @@
+use crate::model::CounterModel;
 use anyhow::Context;
 use dashmap::DashMap;
 use rubato::{FftFixedIn, Resampler};
@@ -152,26 +153,33 @@ pub struct TranscodeItem {
 }
 
 /// The queue of items to be transcoded.
+///
+/// Also counts the number of items queued.
 #[derive(Debug, Clone)]
 struct TranscodeQueue {
-    items: Arc<Mutex<VecDeque<TranscodeItem>>>,
+    queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
     ready: Arc<Condvar>,
+    queued_counter: Arc<AtomicU64>,
 }
 
 impl TranscodeQueue {
     /// Creates a new TranscodeQueue.
-    pub fn new() -> Self {
+    pub fn new(queued_counter: Arc<AtomicU64>) -> Self {
         TranscodeQueue {
-            items: Arc::new(Mutex::new(VecDeque::new())),
+            queue: Arc::new(Mutex::new(VecDeque::new())),
             ready: Arc::new(Condvar::new()),
+            queued_counter,
         }
     }
 
     /// Adds items to the queue.
     pub fn extend(&self, items: Vec<TranscodeItem>) {
         {
-            let mut queue = self.items.lock().unwrap();
+            let mut queue = self.queue.lock().unwrap();
             queue.extend(items);
+
+            self.queued_counter
+                .store(queue.len() as u64, Ordering::Relaxed);
         }
 
         self.ready.notify_all();
@@ -186,22 +194,28 @@ impl TranscodeQueue {
         );
 
         {
-            let mut items = self.items.lock().unwrap();
-            items.retain(|item| !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())));
+            let mut queue = self.queue.lock().unwrap();
+            queue.retain(|item| !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())));
+
+            self.queued_counter
+                .store(queue.len() as u64, Ordering::Relaxed);
         }
     }
 
     /// Waits for a job and takes it from the queue.
     pub fn wait(&self) -> TranscodeItem {
-        let mut items = self.items.lock().unwrap();
+        let mut queue = self.queue.lock().unwrap();
         loop {
             // check for a job
-            if let Some(item) = items.pop_front() {
+            if let Some(item) = queue.pop_front() {
+                self.queued_counter
+                    .store(queue.len() as u64, Ordering::Relaxed);
+
                 return item;
             }
 
             // no job, wait for notification
-            items = self.ready.wait(items).unwrap();
+            queue = self.ready.wait(queue).unwrap();
         }
     }
 }
@@ -228,54 +242,71 @@ pub enum TranscodeCommand {
     CollectGarbage(Vec<u64>),
 }
 
-/// A pool of worker threads for transcoding files.
+/// A handle to a pool of worker threads for transcoding files.
 pub struct TranscodePool {
-    transcodes_dir: PathBuf,
-    status_cache: TranscodeStatusCache,
-
-    queue: TranscodeQueue,
-
+    queued_counter: Arc<AtomicU64>,
     inprogress_counter: RegionCounter,
+
+    command_tx: mpsc::UnboundedSender<TranscodeCommand>,
 }
 
 impl TranscodePool {
-    /// Create a TranscodePool.
+    /// Spawns the transcode worker pool and returns its handle.
     ///
     /// The transcode status cache is guaranteed to be populated after this
     /// returns.
-    pub fn new(transcodes_dir: PathBuf, status_cache: TranscodeStatusCache) -> Self {
-        let pool = TranscodePool {
-            transcodes_dir,
-            status_cache,
+    pub fn spawn(transcodes_dir: PathBuf, status_cache: TranscodeStatusCache) -> Self {
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
 
-            queue: TranscodeQueue::new(),
+        Self::read_transcodes_dir(&transcodes_dir, &status_cache);
 
-            inprogress_counter: RegionCounter::new(),
-        };
+        let queued_counter = Arc::new(AtomicU64::new(0));
+        let inprogress_counter = RegionCounter::new();
 
-        pool.read_transcodes_dir();
+        tokio::spawn({
+            let queued_counter = queued_counter.clone();
+            let inprogress_counter = inprogress_counter.clone();
+            async move {
+                if let Err(e) = Self::run(
+                    transcodes_dir,
+                    status_cache,
+                    queued_counter,
+                    inprogress_counter,
+                    command_rx,
+                )
+                .await
+                {
+                    log::error!("error running transcode pool: {e:#}");
+                }
+            }
+        });
 
-        pool
+        TranscodePool {
+            queued_counter,
+            inprogress_counter,
+
+            command_tx,
+        }
     }
 
     // initialize the transcode status cache by reading the transcode cache directory
-    fn read_transcodes_dir(&self) {
+    fn read_transcodes_dir(transcodes_dir: &Path, status_cache: &TranscodeStatusCache) {
         // create transcode cache directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&self.transcodes_dir) {
+        if let Err(e) = std::fs::create_dir_all(transcodes_dir) {
             log::error!(
                 "failed to create transcode cache directory at {}: {}",
-                self.transcodes_dir.display(),
+                transcodes_dir.display(),
                 e
             );
         }
 
         // read the transcode cache directory
-        let items = match std::fs::read_dir(&self.transcodes_dir) {
+        let items = match std::fs::read_dir(transcodes_dir) {
             Ok(entries) => entries,
             Err(e) => {
                 log::error!(
                     "failed to read transcode cache directory at {}: {}",
-                    self.transcodes_dir.display(),
+                    transcodes_dir.display(),
                     e
                 );
                 return;
@@ -291,7 +322,7 @@ impl TranscodePool {
                     None
                 }
             })
-            .filter_map(|entry| match self.parse_transcodes_dir_entry(&entry) {
+            .filter_map(|entry| match Self::parse_transcodes_dir_entry(&entry) {
                 Ok(res) => res,
                 Err(e) => {
                     log::error!(
@@ -306,7 +337,7 @@ impl TranscodePool {
 
         // update status cache
         for (local_path, hash_kind, hash, file_size) in items {
-            self.status_cache.insert(
+            status_cache.insert(
                 hash_kind,
                 hash,
                 TranscodeStatus::Ready {
@@ -318,7 +349,6 @@ impl TranscodePool {
     }
 
     fn parse_transcodes_dir_entry(
-        &self,
         entry: &std::fs::DirEntry,
     ) -> anyhow::Result<Option<(PathBuf, String, Vec<u8>, u64)>> {
         // get entry file type
@@ -369,18 +399,23 @@ impl TranscodePool {
         Ok(Some((path, hash_kind, hash, file_size)))
     }
 
-    pub async fn run(
-        self,
+    async fn run(
+        transcodes_dir: PathBuf,
+        status_cache: TranscodeStatusCache,
+        queued_counter: Arc<AtomicU64>,
+        inprogress_counter: RegionCounter,
         mut rx: mpsc::UnboundedReceiver<TranscodeCommand>,
     ) -> anyhow::Result<()> {
+        let queue = TranscodeQueue::new(queued_counter);
+
         // spawn transcode workers
         // TODO
         for _ in 0..8 {
             TranscodeWorker::new(
-                self.transcodes_dir.clone(),
-                self.status_cache.clone(),
-                self.queue.clone(),
-                self.inprogress_counter.clone(),
+                transcodes_dir.clone(),
+                status_cache.clone(),
+                queue.clone(),
+                inprogress_counter.clone(),
             );
         }
 
@@ -391,7 +426,7 @@ impl TranscodePool {
                         TranscodeCommand::Add(mut transcode_add_items) => {
                             // remove items that are already queued/transcoded/failed
                             transcode_add_items.retain(|item| {
-                                let status = self.status_cache.get(&item.hash_kind, &item.hash);
+                                let status = status_cache.get(&item.hash_kind, &item.hash);
                                 match status {
                                     Some(status) => {
                                         log::trace!("TranscodePool: skipping file {} (status: {:?})", item.local_path.display(), *status);
@@ -404,7 +439,7 @@ impl TranscodePool {
                             if !transcode_add_items.is_empty() {
                                 // set statuses to Queued
                                 for item in &transcode_add_items {
-                                    self.status_cache.insert(
+                                    status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
                                         TranscodeStatus::Queued,
@@ -412,7 +447,7 @@ impl TranscodePool {
                                 }
 
                                 // add items to queue
-                                self.queue.extend(transcode_add_items);
+                                queue.extend(transcode_add_items);
                             }
                         },
                         TranscodeCommand::Prioritize(items) => {
@@ -423,19 +458,43 @@ impl TranscodePool {
                             // clear statuses for items that are Queued
                             // if Ready or Failed they are left in the cache
                             for item in &items {
-                                self.status_cache.remove_if(&item.hash_kind, &item.hash, |status| {
+                                status_cache.remove_if(&item.hash_kind, &item.hash, |status| {
                                     matches!(status, TranscodeStatus::Queued)
                                 });
                             }
 
                             // remove items from queue
-                            self.queue.remove(items);
+                            queue.remove(items);
                         },
                         TranscodeCommand::CollectGarbage(items) => todo!(),
                     }
                 }
             }
         }
+    }
+
+    pub fn send(&self, command: TranscodeCommand) -> anyhow::Result<()> {
+        self.command_tx
+            .send(command)
+            .map_err(|e| anyhow::anyhow!("failed to send TranscodeCommand: {e:#}"))
+    }
+
+    pub fn queued_count_model(&self) -> CounterModel {
+        CounterModel::from(&self.queued_counter)
+    }
+
+    pub fn inprogress_count_model(&self) -> CounterModel {
+        CounterModel::from(&self.inprogress_counter.0)
+    }
+
+    pub fn ready_count_model(&self) -> CounterModel {
+        // TODO
+        CounterModel::from(Arc::new(AtomicU64::new(0)))
+    }
+
+    pub fn failed_count_model(&self) -> CounterModel {
+        // TODO
+        CounterModel::from(Arc::new(AtomicU64::new(0)))
     }
 }
 
@@ -974,7 +1033,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_after() {
-        let queue = TranscodeQueue::new();
+        let queue = TranscodeQueue::new(Default::default());
 
         // add to queue
         let item_1 = test_item(0x01);
@@ -996,7 +1055,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_before() {
-        let queue = TranscodeQueue::new();
+        let queue = TranscodeQueue::new(Default::default());
 
         // wait before before item
         let thread = std::thread::spawn({
@@ -1021,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_parallel() {
-        let queue = TranscodeQueue::new();
+        let queue = TranscodeQueue::new(Default::default());
 
         // spawn consumer threads
         let thread_1 = std::thread::spawn({
@@ -1050,7 +1109,7 @@ mod tests {
 
     #[test]
     fn test_queue_remove() {
-        let queue = TranscodeQueue::new();
+        let queue = TranscodeQueue::new(Default::default());
 
         // add to queue
         let item_1 = test_item(0x01);
@@ -1062,11 +1121,42 @@ mod tests {
         let item = queue.wait();
         assert_eq!(item.hash, vec![0x01]);
 
-        // remove 2 from queue
+        // remove #2 from queue
         queue.remove(vec![item_2]);
 
         // wait for next
         let item = queue.wait();
         assert_eq!(item.hash, vec![0x03]);
+    }
+
+    #[test]
+    fn test_queue_count() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let queue = TranscodeQueue::new(counter.clone());
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        assert_eq!(counter.load(Ordering::Relaxed), 3);
+
+        // wait for next
+        let item = queue.wait();
+        assert_eq!(item.hash, vec![0x01]);
+
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
+
+        // remove #2 from queue
+        queue.remove(vec![item_2]);
+
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+
+        // wait for next
+        let item = queue.wait();
+        assert_eq!(item.hash, vec![0x03]);
+
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }

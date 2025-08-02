@@ -3,6 +3,7 @@ pub mod error;
 pub mod file_dialog;
 pub mod fs;
 pub mod library;
+pub mod model;
 pub mod node;
 
 use crate::{
