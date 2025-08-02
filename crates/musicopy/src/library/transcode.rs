@@ -3,11 +3,12 @@ use dashmap::DashMap;
 use rubato::{FftFixedIn, Resampler};
 use std::{
     borrow::Borrow,
+    collections::{HashSet, VecDeque},
     fs::File,
     hash::{Hash, Hasher},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
 };
 use symphonia::core::{
     formats::{TrackType, probe::Hint},
@@ -120,6 +121,17 @@ impl TranscodeStatusCache {
     pub fn insert(&self, hash_kind: String, hash: Vec<u8>, status: TranscodeStatus) {
         self.0.insert((hash_kind, hash), status);
     }
+
+    /// Removes an entry from the cache if the condition is true.
+    pub fn remove_if(
+        &self,
+        hash_kind: &str,
+        hash: &[u8],
+        f: impl FnOnce(&TranscodeStatus) -> bool,
+    ) {
+        self.0
+            .remove_if(&(hash_kind, hash) as &dyn HashKey, |_, v| f(v));
+    }
 }
 
 impl Default for TranscodeStatusCache {
@@ -161,6 +173,9 @@ pub enum TranscodeCommand {
 pub struct TranscodePool {
     transcodes_dir: PathBuf,
     status_cache: TranscodeStatusCache,
+
+    queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
+    queue_condvar: Arc<Condvar>,
 }
 
 impl TranscodePool {
@@ -172,6 +187,9 @@ impl TranscodePool {
         let pool = TranscodePool {
             transcodes_dir,
             status_cache,
+
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            queue_condvar: Arc::new(Condvar::new()),
         };
 
         pool.read_transcodes_dir();
@@ -294,15 +312,14 @@ impl TranscodePool {
         self,
         mut rx: mpsc::UnboundedReceiver<TranscodeCommand>,
     ) -> anyhow::Result<()> {
-        let (job_tx, job_rx) = mpsc::unbounded_channel();
-        let job_rx = Arc::new(Mutex::new(job_rx));
-
+        // spawn transcode workers
         // TODO
         for _ in 0..8 {
             TranscodeWorker::new(
-                job_rx.clone(),
-                self.status_cache.clone(),
                 self.transcodes_dir.clone(),
+                self.status_cache.clone(),
+                self.queue.clone(),
+                self.queue_condvar.clone(),
             );
         }
 
@@ -310,33 +327,62 @@ impl TranscodePool {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        TranscodeCommand::Add(transcode_add_items) => {
-                            for item in transcode_add_items {
+                        TranscodeCommand::Add(mut transcode_add_items) => {
+                            // remove items that are already queued/transcoded/failed
+                            transcode_add_items.retain(|item| {
                                 let status = self.status_cache.get(&item.hash_kind, &item.hash);
-                                if status.is_none() {
-                                    log::trace!("TranscodePool: queueing file {}", item.local_path.display());
+                                match status {
+                                    Some(status) => {
+                                        log::trace!("TranscodePool: skipping file {} (status: {:?})", item.local_path.display(), *status);
+                                        false
+                                    },
+                                    None => true,
+                                }
+                            });
 
-                                    // set status to Queued
+                            if !transcode_add_items.is_empty() {
+                                // set statuses to Queued
+                                for item in &transcode_add_items {
                                     self.status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
                                         TranscodeStatus::Queued,
                                     );
-
-                                    // send job to a worker
-                                    job_tx.send(item).context("failed to send transcode job")?;
-                                } else {
-                                    log::trace!("TranscodePool: skipping file {}", item.local_path.display());
                                 }
+
+                                // add items to queue
+                                {
+                                    let mut queue = self.queue.lock().unwrap();
+                                    queue.extend(transcode_add_items);
+                                }
+
+                                // notify workers of new items
+                                self.queue_condvar.notify_all();
                             }
                         },
                         TranscodeCommand::Prioritize(items) => {
-                            // TODO: we need to switch to a priority queue + 0-length bounded channel + dispatcher task
+                            // TODO: switch to a priority queue
                             todo!()
                         },
                         TranscodeCommand::Remove(items) => {
-                            // TODO: this also needs the pqueue because we can't remove the mpsc internal buffer
-                            todo!()
+                            // clear statuses for items that are Queued
+                            // if Ready or Failed they are left in the cache
+                            for item in &items {
+                                self.status_cache.remove_if(&item.hash_kind, &item.hash, |status| {
+                                    matches!(status, TranscodeStatus::Queued)
+                                });
+                            }
+
+                            // remove items from queue
+                            let remove_hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(
+                                items.iter().map(|item| (item.hash_kind.as_str(), item.hash.as_slice())),
+                            );
+                            {
+                                let mut queue = self.queue.lock().unwrap();
+                                queue.retain(|item| {
+                                    !remove_hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice()))
+                                });
+                            }
                         },
                         TranscodeCommand::CollectGarbage(items) => todo!(),
                     }
@@ -351,12 +397,13 @@ struct TranscodeWorker {}
 impl TranscodeWorker {
     /// Start a new transcode worker thread and return a handle to it.
     pub fn new(
-        job_rx: Arc<Mutex<mpsc::UnboundedReceiver<TranscodeItem>>>,
-        status_cache: TranscodeStatusCache,
         transcodes_dir: PathBuf,
+        status_cache: TranscodeStatusCache,
+        queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
+        queue_condvar: Arc<Condvar>,
     ) -> Self {
         std::thread::spawn(move || {
-            if let Err(e) = Self::run(job_rx, status_cache, transcodes_dir) {
+            if let Err(e) = Self::run(transcodes_dir, status_cache, queue, queue_condvar) {
                 log::error!("transcode worker failed: {e:#}");
             }
         });
@@ -366,19 +413,24 @@ impl TranscodeWorker {
 
     /// Implementation of the transcode worker thread.
     fn run(
-        job_rx: Arc<Mutex<mpsc::UnboundedReceiver<TranscodeItem>>>,
-        status_cache: TranscodeStatusCache,
         transcodes_dir: PathBuf,
+        status_cache: TranscodeStatusCache,
+        queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
+        queue_condvar: Arc<Condvar>,
     ) -> anyhow::Result<()> {
         loop {
             // wait for a job
             let job = {
-                let mut job_rx = job_rx.lock().expect("failed to lock job receiver");
-                let Some(job) = job_rx.blocking_recv() else {
-                    log::warn!("transcode worker receiver closed, shutting down");
-                    break;
-                };
-                job
+                let mut queue = queue.lock().unwrap();
+                loop {
+                    // check for a job
+                    if let Some(item) = queue.pop_front() {
+                        break item;
+                    }
+
+                    // no job, wait for notification
+                    queue = queue_condvar.wait(queue).unwrap();
+                }
             };
 
             // write to temp filename
