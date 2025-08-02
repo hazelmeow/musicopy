@@ -8,7 +8,10 @@ use std::{
     hash::{Hash, Hasher},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use symphonia::core::{
     formats::{TrackType, probe::Hint},
@@ -176,6 +179,8 @@ pub struct TranscodePool {
 
     queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
     queue_condvar: Arc<Condvar>,
+
+    inprogress_counter: RegionCounter,
 }
 
 impl TranscodePool {
@@ -190,6 +195,8 @@ impl TranscodePool {
 
             queue: Arc::new(Mutex::new(VecDeque::new())),
             queue_condvar: Arc::new(Condvar::new()),
+
+            inprogress_counter: RegionCounter::new(),
         };
 
         pool.read_transcodes_dir();
@@ -320,6 +327,7 @@ impl TranscodePool {
                 self.status_cache.clone(),
                 self.queue.clone(),
                 self.queue_condvar.clone(),
+                self.inprogress_counter.clone(),
             );
         }
 
@@ -401,9 +409,16 @@ impl TranscodeWorker {
         status_cache: TranscodeStatusCache,
         queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
         queue_condvar: Arc<Condvar>,
+        inprogress_counter: RegionCounter,
     ) -> Self {
         std::thread::spawn(move || {
-            if let Err(e) = Self::run(transcodes_dir, status_cache, queue, queue_condvar) {
+            if let Err(e) = Self::run(
+                transcodes_dir,
+                status_cache,
+                queue,
+                queue_condvar,
+                inprogress_counter,
+            ) {
                 log::error!("transcode worker failed: {e:#}");
             }
         });
@@ -417,6 +432,7 @@ impl TranscodeWorker {
         status_cache: TranscodeStatusCache,
         queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
         queue_condvar: Arc<Condvar>,
+        inprogress_counter: RegionCounter,
     ) -> anyhow::Result<()> {
         loop {
             // wait for a job
@@ -432,6 +448,9 @@ impl TranscodeWorker {
                     queue = queue_condvar.wait(queue).unwrap();
                 }
             };
+
+            // mark thread as in-progress
+            let _counter_guard = inprogress_counter.entered();
 
             // write to temp filename
             let temp_path =
@@ -488,6 +507,45 @@ impl TranscodeWorker {
 
         // worker shut down
         Ok(())
+    }
+}
+
+/// Counts the number of threads of execution that are in a region.
+///
+/// This is used to track how many worker threads are currently working.
+#[derive(Debug, Clone)]
+struct RegionCounter(Arc<AtomicU64>);
+
+impl RegionCounter {
+    /// Creates a new RegionCounter.
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicU64::new(0)))
+    }
+
+    /// Gets the current count.
+    pub fn count(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Enters the region and increments the count, returning a guard that
+    /// decrements the count when dropped at the end of the region.
+    pub fn entered(&self) -> RegionCounterGuard {
+        RegionCounterGuard::new(self)
+    }
+}
+
+struct RegionCounterGuard<'a>(&'a RegionCounter);
+
+impl<'a> RegionCounterGuard<'a> {
+    fn new(counter: &'a RegionCounter) -> Self {
+        counter.0.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for RegionCounterGuard<'_> {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
