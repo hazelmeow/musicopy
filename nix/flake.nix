@@ -21,7 +21,7 @@
           };
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [ "rust-src" ];
+            extensions = [ "rust-src" "llvm-tools-preview" ];
             targets = [
               "aarch64-linux-android"
               "armv7-linux-androideabi"
@@ -33,6 +33,8 @@
           nativeBuildInputs = [
             rustToolchain
             pkgs.cargo-ndk
+            pkgs.cargo-nextest
+            pkgs.cargo-llvm-cov
             pkgs.just
           ];
           buildInputs = [];
