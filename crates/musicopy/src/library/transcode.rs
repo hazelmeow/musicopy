@@ -456,22 +456,31 @@ impl TranscodePool {
             tokio::select! {
                 Some(command) = rx.recv() => {
                     match command {
-                        TranscodeCommand::Add(mut transcode_add_items) => {
-                            // remove items that are already queued/transcoded/failed
-                            transcode_add_items.retain(|item| {
+                        TranscodeCommand::Add(mut items) => {
+                            let mut seen: HashSet<(String, Vec<u8>)> = HashSet::new();
+                            items.retain(|item| {
+                                // remove duplicates from the same batch
+                                if !seen.insert((item.hash_kind.clone(), item.hash.clone())) {
+                                    log::trace!("TranscodePool: skipping duplicate file {}", item.local_path.display());
+                                    return false;
+                                }
+
+                                // remove items that are already queued/transcoded/failed
                                 let status = status_cache.get(&item.hash_kind, &item.hash);
                                 match status {
                                     Some(status) => {
                                         log::trace!("TranscodePool: skipping file {} (status: {:?})", item.local_path.display(), *status);
                                         false
                                     },
-                                    None => true,
+                                    None => {
+                                        true
+                                    },
                                 }
                             });
 
-                            if !transcode_add_items.is_empty() {
+                            if !items.is_empty() {
                                 // set statuses to Queued
-                                for item in &transcode_add_items {
+                                for item in &items {
                                     status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
@@ -480,7 +489,7 @@ impl TranscodePool {
                                 }
 
                                 // add items to queue
-                                queue.extend(transcode_add_items);
+                                queue.extend(items);
                             }
                         },
                         TranscodeCommand::Prioritize(items) => {
