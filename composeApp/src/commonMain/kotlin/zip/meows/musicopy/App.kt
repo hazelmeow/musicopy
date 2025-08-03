@@ -2,13 +2,6 @@ package zip.meows.musicopy
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -16,7 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -29,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.musicopy.CoreException
 import zip.meows.musicopy.ui.NodeStatusSheet
+import zip.meows.musicopy.ui.Theme
 import zip.meows.musicopy.ui.rememberNodeStatusSheetState
 import zip.meows.musicopy.ui.screens.ConnectManually
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
@@ -87,7 +80,7 @@ fun App(
     NodeStatusSheet(nodeStatusSheetState, model)
     val onShowNodeStatus = { nodeStatusSheetState.peek() }
 
-    MaterialTheme {
+    Theme {
         NavHost(
             navController = navController,
             startDestination = Home,

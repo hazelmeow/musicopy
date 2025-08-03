@@ -5,10 +5,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.IconButton
+import androidx.compose.material.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -45,6 +46,8 @@ import uniffi.musicopy.CoreException
 import uniffi.musicopy.LibraryRootModel
 import uniffi.musicopy.Model
 import uniffi.musicopy.pickFolder
+import zip.meows.musicopy.ui.components.Info
+import zip.meows.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun LibraryWidget(
@@ -130,48 +133,36 @@ fun LibraryWidget(
         }
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth()
+    WidgetContainer(
+        title = "LIBRARY",
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(4.dp),
-//            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(4.dp)
-            ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (localRoots.isNotEmpty()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        "Library",
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
+                    OutlinedButton(
+                        onClick = onStartAddRoot,
+                    ) {
+                        Icon(
+                            painter = painterResource(Res.drawable.content_copy_24px),
+                            contentDescription = "Add library folder icon",
+                            modifier = Modifier.size(20.dp)
+                        )
 
-                    Box(modifier = Modifier.weight(1f))
+                        Text("Add", modifier = Modifier.padding(start = 8.dp))
+                    }
 
-                    if (localRoots.isNotEmpty()) {
-                        IconButton(
-                            onClick = onRescan,
-                            //                    modifier = Modifier.background(MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(
-                                painter = painterResource(Res.drawable.cell_tower_24px),
-                                contentDescription = "Rescan library button",
-                            )
-                        }
+                    OutlinedButton(
+                        onClick = onRescan,
+                    ) {
+                        Icon(
+                            painter = painterResource(Res.drawable.cell_tower_24px),
+                            contentDescription = "Rescan library icon",
+                            modifier = Modifier.size(20.dp)
+                        )
 
-                        IconButton(
-                            onClick = onStartAddRoot,
-                            //                    modifier = Modifier.background(MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(
-                                painter = painterResource(Res.drawable.content_copy_24px),
-                                contentDescription = "Add library root button",
-                            )
-                        }
+                        Text("Scan", modifier = Modifier.padding(start = 8.dp))
                     }
                 }
             }
@@ -244,9 +235,10 @@ private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> U
 
 @Composable
 private fun Empty(onStartAddRoot: () -> Unit) {
-
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Lorem ipsum", modifier = Modifier.padding(start = 12.dp))
+        Info {
+            Text("Lorem ipsum", style = MaterialTheme.typography.bodyMedium)
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),

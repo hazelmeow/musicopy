@@ -1,9 +1,6 @@
 package zip.meows.musicopy.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +43,8 @@ import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 import zip.meows.musicopy.shortenNodeId
 import zip.meows.musicopy.toClipEntry
+import zip.meows.musicopy.ui.components.Info
+import zip.meows.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun ConnectWidget(
@@ -57,8 +55,16 @@ fun ConnectWidget(
 ) {
     var nextPending = model.node.servers.find { !it.accepted }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+    // TODO: animate
+    val title = if (nextPending == null) {
+        "CONNECT"
+    } else {
+        "PENDING CONNECTION"
+    }
+
+    WidgetContainer(
+        title = title,
+        modifier = Modifier.aspectRatio(1f)
     ) {
         AnimatedContent(
             targetState = nextPending,
@@ -106,15 +112,17 @@ private fun DefaultScreen(
     localNodeId: String,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Connect", style = MaterialTheme.typography.titleLarge)
+            Info {
+                Text("help text here ...", style = MaterialTheme.typography.bodyMedium)
+            }
 
-            Text("Lorem ipsum")
-
-            Text("Download mobile app >")
+            Info {
+                Text("download mobile app >", style = MaterialTheme.typography.bodyMedium)
+            }
         }
 
         Row(
@@ -148,14 +156,12 @@ private fun PendingScreen(
     onAcceptOnce: () -> Unit,
     onDeny: () -> Unit,
 ) {
-    var trust by remember { mutableStateOf(true) }
+    var trust by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("Pending connection", style = MaterialTheme.typography.titleLarge)
-
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally

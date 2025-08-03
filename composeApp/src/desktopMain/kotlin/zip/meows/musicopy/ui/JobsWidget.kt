@@ -38,6 +38,7 @@ import uniffi.musicopy.TransferJobProgressModel
 import zip.meows.musicopy.formatFloat
 import zip.meows.musicopy.shortenNodeId
 import zip.meows.musicopy.ui.components.AnimatedList
+import zip.meows.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun JobsWidget(
@@ -62,19 +63,13 @@ fun JobsWidget(
     val visible = activeServers.isNotEmpty() || transcodesNotReady > 0
 
     AnimatedVisibility(visible = visible) {
-        Card(
-            modifier = Modifier.fillMaxWidth()
+        WidgetContainer(
+            title = "JOBS"
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    "Jobs",
-                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-                    style = MaterialTheme.typography.titleLarge
-                )
-
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
