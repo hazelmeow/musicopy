@@ -17,14 +17,14 @@ fun DesktopApp(
         set(CoreViewModel.PLATFORM_CONTEXT_KEY, platformContext)
     }
     val viewModel: CoreViewModel = viewModel(factory = CoreViewModel.Factory, extras = extras)
-    
+
     val model by viewModel.state.collectAsState()
 
     MaterialTheme {
         model?.let {
             DesktopHome(
                 model = it,
-                onAcceptAndTrust = { nodeId -> viewModel.instance.acceptConnection(nodeId) }, // TODO
+                onAcceptAndTrust = { nodeId -> viewModel.instance.acceptConnectionAndTrust(nodeId) },
                 onAcceptOnce = { nodeId -> viewModel.instance.acceptConnection(nodeId) },
                 onDeny = { nodeId -> viewModel.instance.denyConnection(nodeId) },
                 onAddLibraryRoot = { name, path -> viewModel.instance.addLibraryRoot(name, path) },

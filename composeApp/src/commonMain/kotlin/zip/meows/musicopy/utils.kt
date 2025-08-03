@@ -1,7 +1,7 @@
 package zip.meows.musicopy
 
 import kotlinx.datetime.Clock
-import uniffi.musicopy.ProgressCounterModel
+import uniffi.musicopy.CounterModel
 import uniffi.musicopy.ServerModel
 import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
@@ -31,11 +31,14 @@ fun mockServerModel(): ServerModel {
 
 fun mockTransferJobModel(): TransferJobModel {
     return TransferJobModel(
-        startedAt = now(),
+        jobId = 1u,
         fileRoot = "root",
         filePath = "a/b/c.mp3",
         fileSize = 12345678u,
-        progress = TransferJobProgressModel.InProgress(bytes = ProgressCounterModel(2345678u))
+        progress = TransferJobProgressModel.InProgress(
+            startedAt = now() - 5u,
+            bytes = CounterModel(2345678u)
+        )
     )
 }
 

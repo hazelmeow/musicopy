@@ -65,7 +65,6 @@ fun DesktopHome(
 
             if (oneCol) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     left()
@@ -73,7 +72,6 @@ fun DesktopHome(
                 }
             } else {
                 Row(
-                    modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Column(

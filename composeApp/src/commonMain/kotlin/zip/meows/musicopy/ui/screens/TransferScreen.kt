@@ -83,7 +83,7 @@ fun TransferScreen(
                 onCancel = onCancel,
             )
 
-            val jobs = clientModel.transferJobs.sortedBy { it.startedAt }.reversed()
+            val jobs = clientModel.transferJobs.sortedBy { it.jobId }
             for (job in jobs) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
@@ -112,7 +112,7 @@ fun TransferScreen(
                         ) {
                             val progress = job.progress
                             when (progress) {
-                                is TransferJobProgressModel.Queued -> {
+                                is TransferJobProgressModel.Requested, is TransferJobProgressModel.Transcoding, is TransferJobProgressModel.Ready -> {
                                     Icon(
                                         painter = painterResource(Res.drawable.chevron_forward_24px),
                                         contentDescription = null,
@@ -172,7 +172,15 @@ internal fun formatJobName(job: TransferJobModel): String {
 internal fun formatJobSubtitle(job: TransferJobModel): String {
     val progress = job.progress
     return when (progress) {
-        is TransferJobProgressModel.Queued -> {
+        is TransferJobProgressModel.Requested -> {
+            "Waiting..."
+        }
+
+        is TransferJobProgressModel.Transcoding -> {
+            "Transcoding..."
+        }
+
+        is TransferJobProgressModel.Ready -> {
             "Waiting..."
         }
 
