@@ -146,6 +146,9 @@ pub enum NodeCommand {
     AcceptConnection(NodeId),
     DenyConnection(NodeId),
 
+    CloseClient(NodeId),
+    CloseServer(NodeId),
+
     DownloadAll {
         client: NodeId,
     },
@@ -287,6 +290,23 @@ impl Node {
                                 server_handle.tx.send(ServerCommand::Close).expect("failed to send ServerCommand::Close");
                             } else {
                                 log::error!("DenyConnection: no server found with node_id: {node_id}");
+                            }
+                        },
+
+                        NodeCommand::CloseClient(node_id) => {
+                            let clients = self.clients.lock().unwrap();
+                            if let Some(client_handle) = clients.get(&node_id) {
+                                client_handle.tx.send(ClientCommand::Close).expect("failed to send ClientCommand::Close");
+                            } else {
+                                log::error!("CloseClient: no client found with node_id: {node_id}");
+                            }
+                        }
+                        NodeCommand::CloseServer(node_id) => {
+                            let servers = self.servers.lock().unwrap();
+                            if let Some(server_handle) = servers.get(&node_id) {
+                                server_handle.tx.send(ServerCommand::Close).expect("failed to send ServerCommand::Close");
+                            } else {
+                                log::error!("CloseServer: no server found with node_id: {node_id}");
                             }
                         },
 

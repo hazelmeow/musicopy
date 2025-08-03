@@ -315,6 +315,26 @@ impl Core {
         Ok(())
     }
 
+    pub fn close_client(&self, node_id: &str) -> Result<(), CoreError> {
+        let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
+
+        self.node_tx
+            .send(NodeCommand::CloseClient(node_id))
+            .context("failed to send to node thread")?;
+
+        Ok(())
+    }
+
+    pub fn close_server(&self, node_id: &str) -> Result<(), CoreError> {
+        let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
+
+        self.node_tx
+            .send(NodeCommand::CloseServer(node_id))
+            .context("failed to send to node thread")?;
+
+        Ok(())
+    }
+
     pub fn add_library_root(&self, name: String, path: String) -> Result<(), CoreError> {
         self.library_tx
             .send(LibraryCommand::AddRoot { name, path })

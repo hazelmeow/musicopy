@@ -303,6 +303,22 @@ impl<'a> App<'a> {
                 });
             }
 
+            "dc" | "disconnect" => {
+                app_log!("disconnecting everything");
+
+                let Some(model) = &self.model else {
+                    anyhow::bail!("model not initialized");
+                };
+
+                for client in &model.node.clients {
+                    self.core.close_client(&client.node_id)?;
+                }
+
+                for server in &model.node.servers {
+                    self.core.close_server(&server.node_id)?;
+                }
+            }
+
             "dl" | "download" => {
                 if parts.len() < 2 {
                     anyhow::bail!("usage: download <client #>");
