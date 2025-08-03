@@ -34,6 +34,7 @@ import com.composables.core.Dialog
 import com.composables.core.DialogPanel
 import com.composables.core.DialogState
 import com.composables.core.Scrim
+import com.composables.core.rememberDialogState
 import kotlinx.coroutines.launch
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.cell_tower_24px
@@ -54,11 +55,11 @@ fun LibraryWidget(
 ) {
     val localRoots = model.library.localRoots
 
-    val dialogState = com.composables.core.rememberDialogState(initiallyVisible = false)
+    val scope = rememberCoroutineScope()
+
+    val addDialogState = rememberDialogState(initiallyVisible = false)
     var pickedPath by remember { mutableStateOf<String?>(null) }
     var dialogName by remember { mutableStateOf("") }
-
-    val scope = rememberCoroutineScope()
 
     val onStartAddRoot = {
         scope.launch {
@@ -72,7 +73,7 @@ fun LibraryWidget(
                     }
 
                     dialogName = it.toPath(normalize = true).name
-                    dialogState.visible = true
+                    addDialogState.visible = true
                 }
             } catch (e: CoreException) {
                 // TODO: toast?
@@ -84,7 +85,7 @@ fun LibraryWidget(
 
     pickedPath?.let {
         AddRootDialog(
-            state = dialogState,
+            state = addDialogState,
             path = it,
             name = dialogName,
             setName = { it -> dialogName = it },
@@ -92,15 +93,41 @@ fun LibraryWidget(
                 onAddRoot(name, path)
                 pickedPath = null
                 dialogName = ""
-                dialogState.visible = false
+                addDialogState.visible = false
             },
             onCancel = {
                 pickedPath = null
                 dialogName = ""
-                dialogState.visible = false
+                addDialogState.visible = false
             },
             localRoots = localRoots
         )
+    }
+
+    val removeDialogState = rememberDialogState(initiallyVisible = false)
+    var removeDialogTarget by remember { mutableStateOf<String?>(null) }
+
+    val onStartRemoveRoot = { targetName: String ->
+        removeDialogState.visible = true
+        removeDialogTarget = targetName
+    }
+
+    removeDialogTarget?.let { targetName ->
+        val path = localRoots.find { root -> root.name == targetName }?.path
+        path?.let { targetPath ->
+            RemoveRootDialog(
+                state = removeDialogState,
+                name = targetName,
+                path = targetPath,
+                onConfirm = {
+                    onRemoveRoot(targetName)
+                    removeDialogState.visible = false
+                },
+                onCancel = {
+                    removeDialogState.visible = false
+                }
+            )
+        }
     }
 
     Card(
@@ -155,7 +182,7 @@ fun LibraryWidget(
             ) {
                 if (localRoots.isNotEmpty()) {
                     for (root in localRoots) {
-                        LibraryRoot(root, onRemoveRoot = onRemoveRoot)
+                        LibraryRoot(root, onStartRemoveRoot = onStartRemoveRoot)
                     }
                 } else {
                     Empty(onStartAddRoot = onStartAddRoot)
@@ -166,7 +193,7 @@ fun LibraryWidget(
 }
 
 @Composable
-private fun LibraryRoot(root: LibraryRootModel, onRemoveRoot: (String) -> Unit) {
+private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -202,7 +229,7 @@ private fun LibraryRoot(root: LibraryRootModel, onRemoveRoot: (String) -> Unit) 
                 }
 
                 IconButton(
-                    onClick = { onRemoveRoot(root.name) },
+                    onClick = { onStartRemoveRoot(root.name) },
                 ) {
                     Icon(
                         painter = painterResource(Res.drawable.content_copy_24px),
@@ -320,6 +347,68 @@ private fun AddRootDialog(
                             enabled = isValid
                         ) {
                             Text("Add")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoveRootDialog(
+    state: DialogState,
+    name: String,
+    path: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Dialog(state = state, onDismiss = onCancel) {
+        Scrim()
+        DialogPanel(
+            modifier = Modifier
+                .widthIn(max = 500.dp)
+                .padding(16.dp)
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = "Remove folder from library",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+
+                    Text(
+                        text = buildAnnotatedString {
+                            append("You are about to remove ")
+                            withStyle(style = SpanStyle(fontWeight = FontWeight.Bold)) {
+                                append(path)
+                            }
+                            append(" from your library. Your files will not be affected.")
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End),
+                    ) {
+                        TextButton(
+                            onClick = onCancel,
+                        ) {
+                            Text("Cancel")
+                        }
+
+                        TextButton(
+                            onClick = onConfirm
+                        ) {
+                            Text("Confirm")
                         }
                     }
                 }
