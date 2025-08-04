@@ -57,36 +57,12 @@ fun SectionCard(
                         }
                     }
                     onAction?.let {
-                        Button(
+                        LoadingButton(
                             onClick = onAction,
-                            contentPadding = if (actionLoading != null) {
-                                PaddingValues(horizontal = 12.dp)
-                            } else {
-                                ButtonDefaults.ContentPadding
-                            },
-                            enabled = actionEnabled && actionLoading != true
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                when (actionLoading) {
-                                    true -> CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                    )
-
-                                    false -> Box(modifier = Modifier.size(16.dp))
-
-                                    null -> Unit
-                                }
-                                Text(actionLabel)
-                                when (actionLoading) {
-                                    true, false -> Box(modifier = Modifier.size(16.dp))
-
-                                    null -> Unit
-                                }
-                            }
-                        }
+                            label = actionLabel,
+                            enabled = actionEnabled,
+                            loading = actionLoading
+                        )
                     }
                 }
             }

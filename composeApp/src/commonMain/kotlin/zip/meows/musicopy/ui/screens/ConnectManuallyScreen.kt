@@ -2,6 +2,7 @@ package zip.meows.musicopy.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,10 +14,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import zip.meows.musicopy.ui.components.SectionCard
+import zip.meows.musicopy.ui.components.Info
+import zip.meows.musicopy.ui.components.LoadingButton
 import zip.meows.musicopy.ui.components.TopBar
 
 @Composable
@@ -37,9 +38,10 @@ fun ConnectManuallyScreen(
             Text("Invalid node ID.")
         }
     } else {
-        @Composable {
-            Text("")
-        }
+//        @Composable {
+//            Text("")
+//        }
+        null
     }
 
     Scaffold(
@@ -52,39 +54,40 @@ fun ConnectManuallyScreen(
         }
     ) { innerPadding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SectionCard(
-                title = "Connect manually",
-                body = {
-                    Text("Enter the node id etc etc etc.")
-
-                    Text("TODO: Desktop install link")
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        OutlinedTextField(
-                            value = value,
-                            onValueChange = { value = it },
-                            label = {
-                                Text("Node ID")
-                            },
-                            maxLines = 1,
-                            modifier = Modifier.fillMaxWidth(),
-                            isError = isError,
-                            supportingText = supportingText
-                        )
-                    }
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                label = {
+                    Text("Node ID")
                 },
-                onCancel = onCancel,
-                onAction = { onSubmit(value) },
-                actionLabel = "Connect",
-                actionEnabled = isValid,
-                actionLoading = isConnecting
+                maxLines = 1,
+                modifier = Modifier.fillMaxWidth(),
+                isError = isError,
+                supportingText = supportingText
             )
+
+            Info {
+                Text("lorem")
+            }
+
+            Info {
+                Text("desktop install link >")
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                LoadingButton(
+                    label = "Connect",
+                    onClick = { onSubmit(value) },
+                    enabled = isValid,
+                    loading = isConnecting,
+                )
+            }
         }
     }
 }
