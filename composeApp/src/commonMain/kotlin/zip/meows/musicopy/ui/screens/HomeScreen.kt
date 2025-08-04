@@ -1,5 +1,6 @@
 package zip.meows.musicopy.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,12 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,12 +22,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import zip.meows.musicopy.AppSettings
 import zip.meows.musicopy.ui.components.TopBar
+import zip.meows.musicopy.ui.widgetHeadline
 
 @Composable
 fun HomeScreen(
@@ -45,58 +50,155 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(null)
-            Button(
-                onClick = onPickDownloadDirectory
-            ) {
-                Text("choose directory")
-            }
-            Text("download directory = ${downloadDirectory}")
-
-            Button(onClick = onShowNodeStatus) {
-                Text("Show Node Info")
-            }
-
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Card(modifier = Modifier.height(50.dp), shape = CircleShape) {
+            Box(modifier = Modifier.padding(8.dp)) {
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            "Connect",
-                            modifier = Modifier.padding(start = 12.dp),
-                            style = MaterialTheme.typography.titleLarge
+                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                            null
                         )
 
-                        Box(modifier = Modifier.weight(1f))
-
-                        Button(onClick = onConnectQRButtonClicked) {
-                            Icon(
-                                painter = painterResource(Res.drawable.content_copy_24px),
-                                contentDescription = "QR code icon"
-                            )
-                            Text("QR")
+                        downloadDirectory?.let { downloadDirectory ->
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    "Download Folder",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    downloadDirectory,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
                         Button(
-                            onClick = onConnectManuallyButtonClicked,
-                            shape = RoundedCornerShape(46.dp)
+                            onClick = onPickDownloadDirectory,
+                            modifier = Modifier.padding(start = 8.dp)
                         ) {
-                            Icon(
-                                painter = painterResource(Res.drawable.content_copy_24px),
-                                contentDescription = "QR code icon"
-                            )
-                            Text("Manual")
+                            Text("Change")
                         }
                     }
                 }
             }
+
+            HorizontalDivider(thickness = 1.dp)
+
+            HomeSection("CONNECT") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(140.dp),
+                        shape = MaterialTheme.shapes.large,
+                        onClick = onConnectQRButtonClicked,
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(
+                                8.dp,
+                                Alignment.CenterVertically
+                            )
+                        ) {
+                            Icon(
+                                painter = painterResource(Res.drawable.content_copy_24px),
+                                contentDescription = "QR code icon",
+                                modifier = Modifier.size(48.dp)
+                            )
+
+                            Text("Scan QR code", style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+
+                    Button(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(140.dp),
+                        shape = MaterialTheme.shapes.large,
+                        onClick = onConnectManuallyButtonClicked,
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(
+                                8.dp,
+                                Alignment.CenterVertically
+                            )
+                        ) {
+                            Icon(
+                                painter = painterResource(Res.drawable.content_copy_24px),
+                                contentDescription = "QR code icon",
+                                modifier = Modifier.size(48.dp)
+                            )
+
+                            Text("Connect manually", style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
+
+            HomeSection("RECENT CONNECTIONS") {
+                Text("asdf")
+                Text("asdf")
+                Text("asdf")
+            }
         }
     }
+}
+
+@Composable
+fun HomeSection(title: String, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.widgetHeadline,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .clipToBounds()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(8.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+    HorizontalDivider(thickness = 1.dp)
 }
 
