@@ -2,6 +2,7 @@ package zip.meows.musicopy.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import zip.meows.musicopy.ui.QRScanner
+import zip.meows.musicopy.ui.components.Info
+import zip.meows.musicopy.ui.components.LoadingButton
 import zip.meows.musicopy.ui.components.SectionCard
 import zip.meows.musicopy.ui.components.TopBar
 
@@ -26,33 +29,29 @@ fun ConnectQRScreen(
     Scaffold(
         topBar = {
             TopBar(
-                title = "Connect using QR code",
+                title = "Scan QR code",
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
         }
     ) { innerPadding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SectionCard(
-                onCancel = onCancel,
-                title = "Connect using QR code",
-                body = {
-                    Text("Scan the QR code etc etc etc.")
-
-                    Text("TODO: Desktop install link")
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        QRScanner(onResult = { nodeId ->
-                            onSubmit(nodeId)
-                        })
-                    }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                QRScanner(onResult = { nodeId ->
+                    onSubmit(nodeId)
                 })
+            }
+
+            Info {
+                Text("lorem")
+            }
+
+            Info {
+                Text("desktop install link >")
+            }
         }
     }
 }
