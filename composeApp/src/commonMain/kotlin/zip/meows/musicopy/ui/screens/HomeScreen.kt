@@ -14,7 +14,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,13 +22,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import zip.meows.musicopy.AppSettings
+import zip.meows.musicopy.ui.components.DetailBox
+import zip.meows.musicopy.ui.components.DetailItem
 import zip.meows.musicopy.ui.components.TopBar
 import zip.meows.musicopy.ui.widgetHeadline
 
@@ -51,42 +50,16 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(modifier = Modifier.padding(8.dp)) {
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth()
+                DetailBox(
+                    actionLabel = "Change",
+                    onAction = onPickDownloadDirectory,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
-                            null
-                        )
+                    val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                        null
+                    )
 
-                        downloadDirectory?.let { downloadDirectory ->
-                            Column(
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    "Download Folder",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    downloadDirectory,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Button(
-                            onClick = onPickDownloadDirectory,
-                            modifier = Modifier.padding(start = 8.dp)
-                        ) {
-                            Text("Change")
-                        }
+                    downloadDirectory?.let { downloadDirectory ->
+                        DetailItem("Download Folder", downloadDirectory)
                     }
                 }
             }

@@ -18,6 +18,7 @@ import androidx.compose.ui.window.rememberWindowState
 import com.composeunstyled.Text
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
 import zip.meows.musicopy.ui.screens.ConnectManuallyScreenSandbox
+import zip.meows.musicopy.ui.screens.TransferScreenSandbox
 
 fun main() = application {
     val state = rememberWindowState(
@@ -51,5 +52,5 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
-    ConnectManuallyScreenSandbox()
+    TransferScreenSandbox()
 }
