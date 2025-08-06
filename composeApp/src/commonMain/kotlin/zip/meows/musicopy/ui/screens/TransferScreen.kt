@@ -92,19 +92,28 @@ fun TransferScreen(
                 modifier = Modifier.padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                LinearProgressIndicator(
-                    progress = {
-                        val count = clientModel.transferJobs.size
-                        val countInProgress =
-                            clientModel.transferJobs.filter { it.progress is TransferJobProgressModel.InProgress }.size
-                        val countNotInProgress = count - countInProgress
+                var progress by remember { mutableStateOf(0f) }
+                val animatedProgress by animateFloatAsState(
+                    targetValue = progress,
+                    animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec
+                )
 
-                        return@LinearProgressIndicator if (count == 0) {
-                            1f
-                        } else {
-                            countNotInProgress.toFloat() / count.toFloat()
+                LaunchedEffect(clientModel.transferJobs) {
+                    while (isActive) {
+                        val count = clientModel.transferJobs.size
+                        val countFinished =
+                            clientModel.transferJobs.filter { it.progress is TransferJobProgressModel.Finished }.size
+
+                        if (count != 0) {
+                            progress = countFinished.toFloat() / count.toFloat()
                         }
-                    },
+
+                        delay(100)
+                    }
+                }
+
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
                     modifier = Modifier.fillMaxWidth()
                 )
 
