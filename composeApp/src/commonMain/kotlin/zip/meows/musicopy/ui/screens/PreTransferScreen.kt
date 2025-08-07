@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
@@ -576,11 +577,12 @@ internal fun TreeRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "${node.part}",
-                style = MaterialTheme.typography.bodyLarge
+                text = node.part,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.StartEllipsis,
+                modifier = Modifier.weight(1f)
             )
-
-            Box(modifier = Modifier.weight(1f))
 
             node.leaf?.let { leaf ->
                 // Text("${leaf.path}", modifier = Modifier.padding(end = 16.dp))
@@ -591,13 +593,14 @@ internal fun TreeRow(
                         estimated = fileSize !is FileSizeModel.Actual,
                         decimals = 0,
                     ),
-                    style = MaterialTheme.typography.labelLarge
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
 
                 Image(
                     painter = painterResource(Res.drawable.chevron_forward_24px),
                     contentDescription = "Expand icon",
-                    modifier = Modifier.padding(horizontal = 8.dp).rotate(degrees),
+                    modifier = Modifier.padding(end = 8.dp).rotate(degrees),
                     colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                 )
             }
