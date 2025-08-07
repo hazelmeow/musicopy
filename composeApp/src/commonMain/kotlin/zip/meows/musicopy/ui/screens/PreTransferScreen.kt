@@ -56,32 +56,23 @@ fun PreTransferScreen(
     onDownloadAll: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    val numFolders by remember {
-        derivedStateOf {
-            countIndexFolders(
-                clientModel.index ?: emptyList()
-            )
-        }
+    val numFolders = remember(clientModel.index) {
+        countIndexFolders(
+            clientModel.index ?: emptyList()
+        )
     }
-    val numFiles by remember {
-        derivedStateOf {
-            clientModel.index?.size ?: 0
-        }
+    val numFiles = remember(clientModel.index) {
+        clientModel.index?.size ?: 0
     }
-    val totalSize by remember {
-        derivedStateOf {
-            clientModel.index?.let { index ->
-                index.sumOf { item -> item.fileSize.value() }
-            } ?: 0u
-        }
+    val totalSize = remember(clientModel.index) {
+        clientModel.index?.let { index ->
+            index.sumOf { item -> item.fileSize.value() }
+        } ?: 0u
     }
-    // display ~ if any size is estimated or unknown
-    val totalSizeEstimated by remember {
-        derivedStateOf {
-            clientModel.index?.let { index ->
-                index.any { it.fileSize !is FileSizeModel.Actual }
-            } ?: false
-        }
+    val totalSizeEstimated = remember(clientModel.index) {
+        clientModel.index?.let { index ->
+            index.any { it.fileSize !is FileSizeModel.Actual }
+        } ?: false
     }
 
     val selected = remember { mutableStateListOf<IndexItemModel>() }
@@ -197,17 +188,13 @@ internal fun Tree(
     selected: SnapshotStateList<IndexItemModel>,
 ) {
     // build node graph
-    val topLevelNodes by remember {
-        derivedStateOf {
-            buildTree(clientModel.index ?: emptyList())
-        }
+    val topLevelNodes = remember(clientModel.index) {
+        buildTree(clientModel.index ?: emptyList())
     }
 
     // build node size lookup
-    val nodeSizes by remember {
-        derivedStateOf {
-            buildNodeSizes(topLevelNodes)
-        }
+    val nodeSizes = remember(topLevelNodes) {
+        buildNodeSizes(topLevelNodes)
     }
 
     val expanded = remember {
