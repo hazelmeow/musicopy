@@ -27,20 +27,20 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastJoinToString
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
 import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
-import zip.meows.musicopy.formatFloat
+import zip.meows.musicopy.formatSize
 import zip.meows.musicopy.mockClientModel
 import zip.meows.musicopy.ui.components.DetailBox
 import zip.meows.musicopy.ui.components.DetailItem
@@ -82,7 +82,24 @@ fun PreTransferScreen(
             } ?: false
         }
     }
-    val totalSizeGB = totalSize.toFloat() / 1_000_000_000f
+
+    val selected = remember { mutableStateListOf<IndexItemModel>() }
+
+    val allCheckboxState = if (selected.isEmpty()) {
+        ToggleableState.Off
+    } else {
+        ToggleableState.On
+    }
+    val onAllCheckboxClick: () -> Unit = {
+        if (selected.isEmpty()) {
+            clientModel.index?.let { index ->
+                selected.clear()
+                selected.addAll(index)
+            }
+        } else {
+            selected.clear()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -104,13 +121,12 @@ fun PreTransferScreen(
                     DetailItem("Folders", "$numFolders")
                     DetailItem("Files", "$numFiles")
                     DetailItem(
-                        "Total Size", "${
-                            if (totalSizeEstimated) {
-                                "~"
-                            } else {
-                                ""
-                            }
-                        }${formatFloat(totalSizeGB, 1)} GB"
+                        "Total Size",
+                        formatSize(
+                            totalSize,
+                            estimated = totalSizeEstimated,
+                            decimals = 0,
+                        )
                     )
                 }
 
@@ -125,7 +141,25 @@ fun PreTransferScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Download everything")
+                        val allSelected = selected.size == clientModel.index?.size
+
+                        Text(
+                            if (selected.isEmpty() || allSelected) {
+                                "Download everything"
+                            } else {
+                                val selectedSize = selected.sumOf { item -> item.fileSize.value() }
+                                val selectedEstimated =
+                                    selected.any { item -> item.fileSize !is FileSizeModel.Actual }
+
+                                "Download selected (${selected.size} files, ${
+                                    formatSize(
+                                        selectedSize,
+                                        estimated = selectedEstimated,
+                                        decimals = 0
+                                    )
+                                })"
+                            }
+                        )
 
                         Icon(
                             painter = painterResource(Res.drawable.chevron_forward_24px),
@@ -137,15 +171,30 @@ fun PreTransferScreen(
 
             HorizontalDivider(thickness = 1.dp)
 
-            SectionHeader("FILES")
+            SectionHeader(
+                text = "FILES",
+                leftContent = {
+                    TriStateCheckbox(
+                        state = allCheckboxState,
+                        onClick = onAllCheckboxClick
+                    )
+                },
+                contentPadding = PaddingValues()
+            )
 
-            Tree(clientModel = clientModel)
+            Tree(
+                clientModel = clientModel,
+                selected = selected,
+            )
         }
     }
 }
 
 @Composable
-internal fun Tree(clientModel: ClientModel) {
+internal fun Tree(
+    clientModel: ClientModel,
+    selected: SnapshotStateList<IndexItemModel>,
+) {
     // build node graph
     val topLevelNodes by remember {
         derivedStateOf {
@@ -172,8 +221,6 @@ internal fun Tree(clientModel: ClientModel) {
 
         expanded
     }
-
-    val selected = remember { mutableStateListOf<IndexItemModel>() }
 
     LazyColumn {
         topLevelNodes.forEach { topLevelNode ->
@@ -538,15 +585,12 @@ internal fun TreeRow(
             node.leaf?.let { leaf ->
                 // Text("${leaf.path}", modifier = Modifier.padding(end = 16.dp))
             } ?: run {
-                val sizeMB = fileSize.value().toFloat() / 1_000_000f
                 Text(
-                    "${
-                        if (fileSize !is FileSizeModel.Actual) {
-                            "~"
-                        } else {
-                            ""
-                        }
-                    }${formatFloat(sizeMB, 1)} MB",
+                    formatSize(
+                        fileSize.value(),
+                        estimated = fileSize !is FileSizeModel.Actual,
+                        decimals = 0,
+                    ),
                     style = MaterialTheme.typography.labelLarge
                 )
 

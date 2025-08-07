@@ -13,6 +13,36 @@ fun shortenNodeId(nodeId: String): String {
     return "${nodeId.slice(0..<6)}...${nodeId.slice((nodeId.length - 6)..<(nodeId.length))}"
 }
 
+fun formatSize(
+    size: ULong,
+    estimated: Boolean = false,
+    decimals: Int = 1,
+): String = formatSize(
+    size.toFloat(),
+    estimated,
+    decimals
+)
+
+fun formatSize(
+    size: Float,
+    estimated: Boolean = false,
+    decimals: Int = 1,
+): String {
+    val estimatedString = if (estimated) {
+        "~"
+    } else {
+        ""
+    }
+
+    if (size > 1_000_000_000f) {
+        val sizeGB = size / 1_000_000_000f
+        return "${estimatedString}${formatFloat(sizeGB, decimals)} GB"
+    } else {
+        val sizeMB = size / 1_000_000f
+        return "${estimatedString}${formatFloat(sizeMB, decimals)} MB"
+    }
+}
+
 fun mockNodeId(): String {
     val allowedChars = ('a'..'f') + ('0'..'9')
     return (1..64)
