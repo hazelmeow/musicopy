@@ -73,6 +73,7 @@ fun mockClientModel(): ClientModel {
         connectionType = "direct",
         latencyMs = 42u,
         index = listOf(
+            // basic example
             mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
             mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
             mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
@@ -90,6 +91,7 @@ fun mockClientModel(): ClientModel {
             mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
             mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
 
+            // folder collapsing example
             mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
             mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
             mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
@@ -107,6 +109,7 @@ fun mockClientModel(): ClientModel {
             mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
             mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
 
+            // a more realistic example
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
@@ -131,6 +134,41 @@ fun mockClientModel(): ClientModel {
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
             mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
+
+            // root collapsing example
+            mockIndexItemModel(nodeId = nodeId, root = "three", basePath = "/a/b/c/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "three", basePath = "/a/b/c/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "three", basePath = "/a/b/c/d"),
+
+            // long text example
+            mockIndexItemModel(
+                nodeId = nodeId,
+                root = "four",
+                basePath = "/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd"
+            ),
+            mockIndexItemModel(
+                nodeId = nodeId,
+                root = "four",
+                basePath = "/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd"
+            ),
+            mockIndexItemModel(
+                nodeId = nodeId,
+                root = "four",
+                basePath = "/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd"
+            ),
+
+            // deep nesting example
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j"),
+            mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j/k"),
         ),
         transferJobs = buildList {
             repeat(100) {
