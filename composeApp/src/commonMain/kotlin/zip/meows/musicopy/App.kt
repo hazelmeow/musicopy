@@ -203,6 +203,19 @@ fun App(
                                     println("download directory is null")
                                 }
                             },
+                            onDownloadPartial = { items ->
+                                downloadDirectory?.let { downloadDirectory ->
+                                    viewModel.instance.downloadPartial(
+                                        nodeId,
+                                        items,
+                                        downloadDirectory
+                                    )
+                                    navController.navigate(Transfer(nodeId = nodeId))
+                                } ?: run {
+                                    // TODO toast?
+                                    println("download directory is null")
+                                }
+                            },
                             onCancel = {
                                 navController.popBackStack(Home, inclusive = false)
                             }

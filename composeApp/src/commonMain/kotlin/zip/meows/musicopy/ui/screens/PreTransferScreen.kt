@@ -23,7 +23,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -39,6 +38,7 @@ import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
+import uniffi.musicopy.DownloadPartialItemModel
 import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
 import zip.meows.musicopy.formatSize
@@ -54,6 +54,7 @@ fun PreTransferScreen(
 
     clientModel: ClientModel,
     onDownloadAll: () -> Unit,
+    onDownloadPartial: (List<DownloadPartialItemModel>) -> Unit,
     onCancel: () -> Unit,
 ) {
     val numFolders = remember(clientModel.index) {
@@ -93,6 +94,22 @@ fun PreTransferScreen(
         }
     }
 
+    val onDownload = {
+        val allSelected = selected.size == clientModel.index?.size
+
+        if (selected.isEmpty() || allSelected) {
+            onDownloadAll()
+        } else {
+            onDownloadPartial(selected.map { item ->
+                DownloadPartialItemModel(
+                    nodeId = item.nodeId,
+                    root = item.root,
+                    path = item.path
+                )
+            })
+        }
+    }
+
     Scaffold(
         topBar = {
             TopBar(
@@ -123,7 +140,7 @@ fun PreTransferScreen(
                 }
 
                 Button(
-                    onClick = onDownloadAll,
+                    onClick = onDownload,
                     modifier = Modifier.fillMaxWidth().height(64.dp),
                     shape = MaterialTheme.shapes.large,
                     contentPadding = PaddingValues(16.dp)
@@ -634,6 +651,7 @@ fun PreTransferScreenSandbox() {
 
         clientModel = mockClientModel(),
         onDownloadAll = {},
+        onDownloadPartial = {},
         onCancel = {}
     )
 }
