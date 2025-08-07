@@ -1399,8 +1399,8 @@ impl Server {
                     let mut updates = Vec::new();
 
                     for item in index.iter_mut() {
-                        // if the client doesn't have the file size
-                        if item.file_size == FileSize::Unknown {
+                        // if the client doesn't have the actual file size
+                        if !matches!(item.file_size, FileSize::Actual(_)) {
                             // try to get file size from transcode status cache
                             let file_size = self
                                 .transcode_status_cache
@@ -1411,8 +1411,8 @@ impl Server {
                                     _ => None,
                                 });
 
-                            // if we now have a file size, update the client
-                            if let Some(file_size) = file_size {
+                            // if we now have an updated file size, update the client
+                            if let Some(file_size) = file_size && file_size != item.file_size {
                                 // store client's view so we don't send the same update again
                                 item.file_size = file_size;
 
@@ -1900,18 +1900,21 @@ impl Client {
                                     log::info!("received index update with {} items", updates.len());
                                     {
                                         let mut index = self.index.lock().unwrap();
-                                        let Some(index) = &mut *index else { continue };
-                                        for update in updates {
-                                            match update {
-                                                IndexUpdateItem::FileSize { hash_kind, hash, file_size } => {
-                                                    // TODO: don't be exponential
-                                                    for item in index.iter_mut() {
-                                                        if item.hash_kind == hash_kind && item.hash == hash {
-                                                            item.file_size = file_size;
+                                        if let Some(index) = index.as_mut() {
+                                            for update in updates {
+                                                match update {
+                                                    IndexUpdateItem::FileSize { hash_kind, hash, file_size } => {
+                                                        // TODO: don't be exponential
+                                                        for item in index.iter_mut() {
+                                                            if item.hash_kind == hash_kind && item.hash == hash {
+                                                                item.file_size = file_size;
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
+                                        } else {
+                                            log::warn!("received index update but index is None, ignoring");
                                         }
                                     }
                                 }
