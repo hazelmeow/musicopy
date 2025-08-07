@@ -70,14 +70,7 @@ fun PreTransferScreen(
     val totalSize by remember {
         derivedStateOf {
             clientModel.index?.let { index ->
-                index.sumOf { item ->
-                    val fileSize = item.fileSize
-                    when (fileSize) {
-                        is FileSizeModel.Actual -> fileSize.v1
-                        is FileSizeModel.Estimated -> fileSize.v1
-                        is FileSizeModel.Unknown -> 0u
-                    }
-                }
+                index.sumOf { item -> item.fileSize.value() }
             } ?: 0u
         }
     }
@@ -160,6 +153,13 @@ internal fun Tree(clientModel: ClientModel) {
         }
     }
 
+    // build node size lookup
+    val nodeSizes by remember {
+        derivedStateOf {
+            buildNodeSizes(topLevelNodes)
+        }
+    }
+
     val expanded = remember {
         val expanded = mutableStateListOf<TreeNode>()
 
@@ -196,7 +196,8 @@ internal fun Tree(clientModel: ClientModel) {
                     } else {
                         selected.remove(item)
                     }
-                }
+                },
+                nodeSizes = nodeSizes
             )
         }
     }
@@ -308,6 +309,51 @@ internal fun collapseNodeChildren(node: TreeNode) {
 }
 
 /**
+ * Builds a map of sizes of TreeNodes.
+ */
+internal fun buildNodeSizes(
+    nodes: List<TreeNode>,
+    map: MutableMap<TreeNode, FileSizeModel> = mutableMapOf(),
+): MutableMap<TreeNode, FileSizeModel> {
+    for (node in nodes) {
+        // recursively build sizes of children
+        buildNodeSizes(node.children, map)
+
+        // determine size of this node
+        val size = node.leaf?.fileSize ?: run {
+            // internal node's size is sum of child sizes
+            val total = node.children.sumOf { child ->
+                val childSize = map.getOrElse(
+                    child,
+                    defaultValue = { FileSizeModel.Unknown }
+                )
+                childSize.value()
+            }
+
+            // internal node is estimated if any child size is not actual
+            val isEstimated = node.children.any { child ->
+                val childSize = map.getOrElse(
+                    child,
+                    defaultValue = { FileSizeModel.Unknown }
+                )
+                childSize !is FileSizeModel.Actual
+            }
+
+            if (isEstimated) {
+                FileSizeModel.Estimated(total)
+            } else {
+                FileSizeModel.Actual(total)
+            }
+        }
+
+        // add to map
+        map[node] = size
+    }
+
+    return map
+}
+
+/**
  * Gets the `ToggleableState` of a node in the file tree.
  *
  * If the node is a leaf (file), the state is on if selected and off if not selected.
@@ -390,8 +436,9 @@ internal fun LazyListScope.renderNode(
     onExpand: (TreeNode) -> Unit,
     isSelected: (IndexItemModel) -> Boolean,
     onSelect: (IndexItemModel, Boolean) -> Unit,
-    indent: Int = 0,
+    nodeSizes: Map<TreeNode, FileSizeModel>,
     keyPath: String = "",
+    indent: Int = 0,
 ) {
     val selectedState = getNodeState(node, isSelected)
 
@@ -422,6 +469,7 @@ internal fun LazyListScope.renderNode(
             onExpand = { onExpand(node) },
             selectedState = selectedState,
             onSelect = onSelectThis,
+            fileSize = nodeSizes.getOrElse(node, defaultValue = { FileSizeModel.Unknown }),
             indent = indent,
         )
     }
@@ -435,6 +483,7 @@ internal fun LazyListScope.renderNode(
                 indent = indent + 1,
                 isSelected = isSelected,
                 onSelect = onSelect,
+                nodeSizes = nodeSizes,
                 keyPath = "$keyPath/${node.part}"
             )
         }
@@ -448,6 +497,7 @@ internal fun TreeRow(
     onExpand: () -> Unit,
     selectedState: ToggleableState?,
     onSelect: () -> Unit,
+    fileSize: FileSizeModel,
     indent: Int,
 ) {
     val degrees by animateFloatAsState(if (isExpanded) 90f else 0f)
@@ -456,7 +506,13 @@ internal fun TreeRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clickable(onClick = onExpand),
+            .clickable(onClick = {
+                if (node.children.isEmpty()) {
+                    onSelect()
+                } else {
+                    onExpand()
+                }
+            }),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.width((indent * 24).dp))
@@ -472,17 +528,32 @@ internal fun TreeRow(
                 .fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("${node.part}")
+            Text(
+                "${node.part}",
+                style = MaterialTheme.typography.bodyLarge
+            )
 
             Box(modifier = Modifier.weight(1f))
 
             node.leaf?.let { leaf ->
-                Text("${leaf.path}", modifier = Modifier.padding(end = 16.dp))
+                // Text("${leaf.path}", modifier = Modifier.padding(end = 16.dp))
             } ?: run {
+                val sizeMB = fileSize.value().toFloat() / 1_000_000f
+                Text(
+                    "${
+                        if (fileSize !is FileSizeModel.Actual) {
+                            "~"
+                        } else {
+                            ""
+                        }
+                    }${formatFloat(sizeMB, 1)} MB",
+                    style = MaterialTheme.typography.labelLarge
+                )
+
                 Image(
                     painter = painterResource(Res.drawable.chevron_forward_24px),
                     contentDescription = "Expand icon",
-                    modifier = Modifier.padding(end = 8.dp).rotate(degrees),
+                    modifier = Modifier.padding(horizontal = 8.dp).rotate(degrees),
                     colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                 )
             }
@@ -512,6 +583,14 @@ internal fun countIndexFolders(index: List<IndexItemModel>): Int {
     }
 
     return seen.size
+}
+
+fun FileSizeModel.value(): ULong {
+    return when (this) {
+        is FileSizeModel.Actual -> v1
+        is FileSizeModel.Estimated -> v1
+        is FileSizeModel.Unknown -> 0uL
+    }
 }
 
 @Composable

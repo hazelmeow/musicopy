@@ -124,6 +124,17 @@ fun mockIndexItemModel(
 ): IndexItemModel {
     val itemCount = nextMockIndexItemCount++
 
+    val estimate = false
+    val fileSize = if (estimate) {
+        when (itemCount % 10) {
+            0 -> FileSizeModel.Unknown
+            in 1..2 -> FileSizeModel.Estimated(10000000u)
+            else -> FileSizeModel.Actual(12345678u)
+        }
+    } else {
+        FileSizeModel.Actual(12345678u)
+    }
+
     return IndexItemModel(
         nodeId = nodeId,
         root = root,
@@ -132,13 +143,7 @@ fun mockIndexItemModel(
         hashKind = "test",
         hash = byteArrayOf(12, 34),
 
-        fileSize = when (itemCount % 10) {
-            0 -> FileSizeModel.Unknown
-            else -> when (itemCount % 2) {
-                0 -> FileSizeModel.Actual(12345678u)
-                else -> FileSizeModel.Estimated(10000000u)
-            }
-        },
+        fileSize = fileSize,
     )
 }
 
