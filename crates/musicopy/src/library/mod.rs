@@ -266,7 +266,7 @@ impl Library {
                 })
                 .map(|res| match res {
                     Ok(item) => Either::Left(item),
-                    Err(item) => Either::Right(item),
+                    Err(e) => Either::Right(e),
                 })
                 .collect::<(Vec<_>, Vec<_>)>()
         })
@@ -364,7 +364,7 @@ impl Library {
 
         LibraryModel {
             local_roots,
-            
+
             transcode_count_queued: Arc::new(self.transcode_pool.queued_count_model()),
             transcode_count_inprogress: Arc::new(self.transcode_pool.inprogress_count_model()),
             transcode_count_ready: Arc::new(self.transcode_pool.ready_count_model()),
@@ -385,21 +385,20 @@ fn get_file_hash(path: &PathBuf) -> anyhow::Result<(&'static str, Vec<u8>)> {
 
     let mut hint = Hint::new();
     if let Some(extension) = path.extension() {
-        hint.with_extension(extension.to_str().unwrap());
+        hint.with_extension(extension.to_str().context("invalid file extension")?);
     }
 
-    let meta_opts = MetadataOptions::default();
-    let fmt_opts = FormatOptions::default();
-
-    let mut probe = symphonia::default::get_probe()
-        .probe(&hint, mss, fmt_opts, meta_opts)
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, Default::default(), Default::default())
         .context("failed to probe file")?;
 
-    let audio_track = probe
+    // get the default audio track
+    let audio_track = format
         .default_track(TrackType::Audio)
         .context("failed to get default audio track")?;
     let audio_track_id = audio_track.id;
 
+    // check if MD5 verification check is available (common for flacs)
     if let Some(VerificationCheck::Md5(verification_md5)) = &audio_track
         .codec_params
         .as_ref()
@@ -413,11 +412,17 @@ fn get_file_hash(path: &PathBuf) -> anyhow::Result<(&'static str, Vec<u8>)> {
         let mut hasher = XxHash3_64::with_seed(8888);
 
         loop {
-            let packet = match probe.next_packet() {
+            // read next packet
+            let packet = match format.next_packet() {
                 Ok(Some(packet)) => packet,
+
+                // end of track
                 Ok(None) => break,
+
                 Err(e) => anyhow::bail!("failed to read packet: {e}"),
             };
+
+            // skip packets from other tracks
             if packet.track_id() != audio_track_id {
                 continue;
             }

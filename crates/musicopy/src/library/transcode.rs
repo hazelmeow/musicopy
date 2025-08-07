@@ -1,6 +1,7 @@
 use crate::model::CounterModel;
 use anyhow::Context;
 use dashmap::DashMap;
+use rayon::prelude::*;
 use rubato::{FftFixedIn, Resampler};
 use std::{
     borrow::Borrow,
@@ -24,7 +25,7 @@ use tokio::sync::mpsc;
 /// The transcode status of a file.
 #[derive(Debug)]
 pub enum TranscodeStatus {
-    Queued,
+    Queued { estimated_size: Option<f64> },
     Ready { local_path: PathBuf, file_size: u64 },
     Failed { error: anyhow::Error },
 }
@@ -139,7 +140,7 @@ impl TranscodeStatusCache {
     /// Inserts a key and a value into the cache, replacing the old value.
     pub fn insert(&self, hash_kind: String, hash: Vec<u8>, status: TranscodeStatus) {
         match status {
-            TranscodeStatus::Queued => {
+            TranscodeStatus::Queued { .. } => {
                 self.queued_counter.fetch_add(1, Ordering::Relaxed);
             }
             TranscodeStatus::Ready { .. } => {
@@ -153,7 +154,7 @@ impl TranscodeStatusCache {
         let prev = self.cache.insert((hash_kind, hash), status);
 
         match prev {
-            Some(TranscodeStatus::Queued) => {
+            Some(TranscodeStatus::Queued { .. }) => {
                 self.queued_counter.fetch_sub(1, Ordering::Relaxed);
             }
             Some(TranscodeStatus::Ready { .. }) => {
@@ -171,7 +172,7 @@ impl TranscodeStatusCache {
         let prev = self
             .cache
             .remove_if(&(hash_kind, hash) as &dyn HashKey, |_, status| {
-                matches!(status, TranscodeStatus::Queued)
+                matches!(status, TranscodeStatus::Queued { .. })
             });
 
         if prev.is_some() {
@@ -479,12 +480,29 @@ impl TranscodePool {
                             });
 
                             if !items.is_empty() {
+                                // estimate file sizes in parallel using rayon
+                                let (items, estimated_sizes) = tokio::task::spawn_blocking(move || {
+                                    let estimated_sizes = items.par_iter().map(|item| {
+                                        match estimate_file_size(&item.local_path) {
+                                            Ok(size) => Some(size),
+                                            Err(e) => {
+                                                log::warn!("TranscodePool: failed to estimate file size for {}: {e:#}", item.local_path.display());
+                                                None
+                                            }
+                                        }
+                                    }).collect::<Vec<_>>();
+
+                                    (items, estimated_sizes)
+                                }).await.context("failed to join file size task")?;
+
                                 // set statuses to Queued
-                                for item in &items {
+                                for (i, item) in items.iter().enumerate() {
+                                    let estimated_size = estimated_sizes[i];
+
                                     status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
-                                        TranscodeStatus::Queued,
+                                        TranscodeStatus::Queued { estimated_size },
                                     );
                                 }
 
@@ -692,7 +710,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
 
     let mut hint = Hint::new();
     if let Some(extension) = input_path.extension() {
-        hint.with_extension(extension.to_str().unwrap());
+        hint.with_extension(extension.to_str().context("invalid file extension")?);
     }
 
     let mut format = symphonia::default::get_probe()
@@ -731,7 +749,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
     // decode the audio track into planar samples
     let mut original_samples: Vec<Vec<f32>> = vec![Vec::new(); channel_count];
     loop {
-        // decode next packet
+        // read next packet
         let packet = match format.next_packet() {
             Ok(Some(packet)) => packet,
 
@@ -1048,6 +1066,99 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
 
     // we did it
     Ok(file_size)
+}
+
+/// Estimates the size of a file after transcoding based on its duration.
+fn estimate_file_size(path: &PathBuf) -> anyhow::Result<f64> {
+    let src = std::fs::File::open(path).context("failed to open file")?;
+
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension() {
+        hint.with_extension(extension.to_str().context("invalid file extension")?);
+    }
+
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, Default::default(), Default::default())
+        .context("failed to probe file")?;
+
+    // get the default audio track
+    let audio_track = format
+        .default_track(TrackType::Audio)
+        .context("failed to get default audio track")?;
+    let audio_track_id = audio_track.id;
+
+    // get time base and number of frames from the audio track
+    let duration_secs = match (audio_track.time_base, audio_track.num_frames) {
+        (Some(time_base), Some(num_frames)) => {
+            let duration = time_base.calc_time(num_frames);
+            duration.seconds as f64 + duration.frac
+        }
+
+        _ => {
+            log::info!(
+                "file missing time_base or num_frames, decoding to find duration: {}",
+                path.display()
+            );
+
+            // get codec parameters for the audio track
+            let codec_params = audio_track
+                .codec_params
+                .as_ref()
+                .context("failed to get codec parameters")?;
+            let audio_codec_params = codec_params
+                .audio()
+                .context("codec parameters are not audio")?;
+
+            // get sample rate
+            let sample_rate = audio_codec_params
+                .sample_rate
+                .context("failed to get sample rate from codec params")?;
+
+            let mut decoder = symphonia::default::get_codecs()
+                .make_audio_decoder(audio_codec_params, &Default::default())
+                .context("failed to create decoder")?;
+
+            // decode the audio track and count frames
+            let mut num_frames = 0;
+            loop {
+                // read next packet
+                let packet = match format.next_packet() {
+                    Ok(Some(packet)) => packet,
+
+                    // end of track
+                    Ok(None) => break,
+
+                    Err(e) => {
+                        return Err(e).context("failed to read packet");
+                    }
+                };
+
+                // skip packets from other tracks
+                if packet.track_id() != audio_track_id {
+                    continue;
+                }
+
+                // decode packet
+                let audio_buf = decoder.decode(&packet).context("failed to decode packet")?;
+
+                // count frames
+                num_frames += audio_buf.frames();
+            }
+
+            // convert frames to seconds
+            num_frames as f64 / sample_rate as f64
+        }
+    };
+
+    // estimated size = duration * bitrate (128k), converted to bytes
+    let estimated_size = duration_secs * 128_000.0 / 8.0;
+
+    // add 1% for container overhead
+    let estimated_size = estimated_size * 1.01;
+
+    Ok(estimated_size)
 }
 
 #[cfg(test)]

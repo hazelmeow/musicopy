@@ -1057,7 +1057,7 @@ impl Server {
                             };
 
                             match &*status {
-                                TranscodeStatus::Queued => {
+                                TranscodeStatus::Queued { .. } => {
                                     // job is still queued
                                 }
 
@@ -1216,7 +1216,7 @@ impl Server {
                                         };
 
                                         match &*transcode_status {
-                                            TranscodeStatus::Queued => {
+                                            TranscodeStatus::Queued { .. } => {
                                                 // file is queued for transcoding
 
                                                 // create job
