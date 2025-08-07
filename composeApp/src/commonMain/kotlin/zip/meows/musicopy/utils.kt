@@ -3,6 +3,7 @@ package zip.meows.musicopy
 import kotlinx.datetime.Clock
 import uniffi.musicopy.ClientModel
 import uniffi.musicopy.CounterModel
+import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
 import uniffi.musicopy.ServerModel
 import uniffi.musicopy.TransferJobModel
@@ -121,15 +122,23 @@ fun mockIndexItemModel(
     root: String = "library",
     basePath: String = "/a/b/c",
 ): IndexItemModel {
+    val itemCount = nextMockIndexItemCount++
+
     return IndexItemModel(
         nodeId = nodeId,
         root = root,
-        path = "${basePath}/file${nextMockIndexItemCount++}.flac",
+        path = "${basePath}/file${itemCount}.flac",
 
         hashKind = "test",
         hash = byteArrayOf(12, 34),
 
-        fileSize = 12345678u,
+        fileSize = when (itemCount % 10) {
+            0 -> FileSizeModel.Unknown
+            else -> when (itemCount % 2) {
+                0 -> FileSizeModel.Actual(12345678u)
+                else -> FileSizeModel.Estimated(10000000u)
+            }
+        },
     )
 }
 

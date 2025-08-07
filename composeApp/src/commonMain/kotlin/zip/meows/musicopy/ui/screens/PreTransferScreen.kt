@@ -38,6 +38,7 @@ import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
+import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
 import zip.meows.musicopy.formatFloat
 import zip.meows.musicopy.mockClientModel
@@ -69,8 +70,23 @@ fun PreTransferScreen(
     val totalSize by remember {
         derivedStateOf {
             clientModel.index?.let { index ->
-                index.sumOf { item -> item.fileSize ?: 0u }
+                index.sumOf { item ->
+                    val fileSize = item.fileSize
+                    when (fileSize) {
+                        is FileSizeModel.Actual -> fileSize.v1
+                        is FileSizeModel.Estimated -> fileSize.v1
+                        is FileSizeModel.Unknown -> 0u
+                    }
+                }
             } ?: 0u
+        }
+    }
+    // display ~ if any size is estimated or unknown
+    val totalSizeEstimated by remember {
+        derivedStateOf {
+            clientModel.index?.let { index ->
+                index.any { it.fileSize !is FileSizeModel.Actual }
+            } ?: false
         }
     }
     val totalSizeGB = totalSize.toFloat() / 1_000_000_000f
@@ -94,7 +110,15 @@ fun PreTransferScreen(
                 DetailBox {
                     DetailItem("Folders", "$numFolders")
                     DetailItem("Files", "$numFiles")
-                    DetailItem("Total Size", "${formatFloat(totalSizeGB, 1)} GB")
+                    DetailItem(
+                        "Total Size", "${
+                            if (totalSizeEstimated) {
+                                "~"
+                            } else {
+                                ""
+                            }
+                        }${formatFloat(totalSizeGB, 1)} GB"
+                    )
                 }
 
                 Button(
