@@ -87,6 +87,14 @@ pub struct ServerModel {
     pub transfer_jobs: Vec<TransferJobModel>,
 }
 
+/// Model of an unknown, estimated, or actual file size.
+#[derive(Debug, uniffi::Enum)]
+pub enum FileSizeModel {
+    Unknown,
+    Estimated(u64),
+    Actual(u64),
+}
+
 /// Model of an item in the index sent by the server.
 #[derive(Debug, uniffi::Record)]
 pub struct IndexItemModel {
@@ -97,7 +105,7 @@ pub struct IndexItemModel {
     pub hash_kind: String,
     pub hash: Vec<u8>,
 
-    pub file_size: Option<u64>,
+    pub file_size: FileSizeModel,
 }
 
 /// Model of an outgoing connection.
@@ -553,7 +561,11 @@ impl Node {
                                     hash_kind: item.hash_kind.clone(),
                                     hash: item.hash.clone(),
 
-                                    file_size: item.file_size,
+                                    file_size: match item.file_size {
+                                        FileSize::Unknown => FileSizeModel::Unknown,
+                                        FileSize::Estimated(n) => FileSizeModel::Estimated(n),
+                                        FileSize::Actual(n) => FileSizeModel::Actual(n),
+                                    },
                                 })
                                 .collect()
                         })
@@ -753,6 +765,14 @@ enum ClientMessage {
     Download(Vec<DownloadItem>),
 }
 
+/// An unknown, estimated, or actual file size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileSize {
+    Unknown,
+    Estimated(u64),
+    Actual(u64),
+}
+
 /// An item available for downloading from the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexItem {
@@ -763,7 +783,7 @@ struct IndexItem {
     hash_kind: String,
     hash: Vec<u8>,
 
-    file_size: Option<u64>,
+    file_size: FileSize,
 }
 
 /// An update to an item in the index.
@@ -773,7 +793,7 @@ enum IndexUpdateItem {
         hash_kind: String,
         hash: Vec<u8>,
 
-        file_size: u64,
+        file_size: FileSize,
     },
 }
 
@@ -1380,20 +1400,21 @@ impl Server {
 
                     for item in index.iter_mut() {
                         // if the client doesn't have the file size
-                        if item.file_size.is_none() {
+                        if item.file_size == FileSize::Unknown {
                             // try to get file size from transcode status cache
                             let file_size = self
                                 .transcode_status_cache
                                 .get(&item.hash_kind, &item.hash)
                                 .and_then(|entry| match &*entry {
-                                    TranscodeStatus::Ready { file_size, .. } => Some(*file_size),
+                                    TranscodeStatus::Queued { estimated_size } => estimated_size.map(FileSize::Estimated),
+                                    TranscodeStatus::Ready { file_size, .. } => Some(FileSize::Actual(*file_size)),
                                     _ => None,
                                 });
 
-                            // if we now have the file size, update the client
+                            // if we now have a file size, update the client
                             if let Some(file_size) = file_size {
                                 // store client's view so we don't send the same update again
-                                item.file_size = Some(file_size);
+                                item.file_size = file_size;
 
                                 updates.push(IndexUpdateItem::FileSize {
                                     hash_kind: item.hash_kind.clone(),
@@ -1433,14 +1454,20 @@ impl Server {
         let index = files
             .into_iter()
             .map(|file| {
-                // get file size from transcode status cache
+                // try to get file size from transcode status cache
                 let file_size = self
                     .transcode_status_cache
                     .get(&file.hash_kind, &file.hash)
                     .and_then(|entry| match &*entry {
-                        TranscodeStatus::Ready { file_size, .. } => Some(*file_size),
+                        TranscodeStatus::Queued { estimated_size } => {
+                            estimated_size.map(FileSize::Estimated)
+                        }
+                        TranscodeStatus::Ready { file_size, .. } => {
+                            Some(FileSize::Actual(*file_size))
+                        }
                         _ => None,
-                    });
+                    })
+                    .unwrap_or(FileSize::Unknown);
 
                 IndexItem {
                     node_id: file.node_id,
@@ -1880,7 +1907,7 @@ impl Client {
                                                     // TODO: don't be exponential
                                                     for item in index.iter_mut() {
                                                         if item.hash_kind == hash_kind && item.hash == hash {
-                                                            item.file_size = Some(file_size);
+                                                            item.file_size = file_size;
                                                         }
                                                     }
                                                 }

@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 /// The transcode status of a file.
 #[derive(Debug)]
 pub enum TranscodeStatus {
-    Queued { estimated_size: Option<f64> },
+    Queued { estimated_size: Option<u64> },
     Ready { local_path: PathBuf, file_size: u64 },
     Failed { error: anyhow::Error },
 }
@@ -1069,7 +1069,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
 }
 
 /// Estimates the size of a file after transcoding based on its duration.
-fn estimate_file_size(path: &PathBuf) -> anyhow::Result<f64> {
+fn estimate_file_size(path: &PathBuf) -> anyhow::Result<u64> {
     let src = std::fs::File::open(path).context("failed to open file")?;
 
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
@@ -1158,7 +1158,7 @@ fn estimate_file_size(path: &PathBuf) -> anyhow::Result<f64> {
     // add 1% for container overhead
     let estimated_size = estimated_size * 1.01;
 
-    Ok(estimated_size)
+    Ok(estimated_size as u64)
 }
 
 #[cfg(test)]
