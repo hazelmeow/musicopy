@@ -42,11 +42,64 @@ fun mockClientModel(): ClientModel {
         connectionType = "direct",
         latencyMs = 42u,
         index = listOf(
-            mockIndexItemModel(nodeId = nodeId),
-            mockIndexItemModel(nodeId = nodeId),
-            mockIndexItemModel(nodeId = nodeId),
-            mockIndexItemModel(nodeId = nodeId),
-            mockIndexItemModel(nodeId = nodeId),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/a/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
+            mockIndexItemModel(nodeId = nodeId, root = "one", basePath = "/e"),
+
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/b/c"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/a/foo/bar/baz/d"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
+            mockIndexItemModel(nodeId = nodeId, root = "two", basePath = "/e/foo/bar/baz"),
+
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art1/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2/alb"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2/alb"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen1/art2/alb"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art3/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb1"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
+            mockIndexItemModel(nodeId = nodeId, root = "ex", basePath = "/gen2/art4/alb2"),
         ),
         transferJobs = buildList {
             repeat(100) {
@@ -61,19 +114,23 @@ fun mockClientModel(): ClientModel {
     )
 }
 
+var nextMockIndexItemCount: Int = 1
+
 fun mockIndexItemModel(
     nodeId: String = mockNodeId(),
+    root: String = "library",
+    basePath: String = "/a/b/c",
 ): IndexItemModel {
     return IndexItemModel(
         nodeId = nodeId,
         hashKind = "test",
         hash = byteArrayOf(12, 34),
-        root = "library",
-        path = "/path/to/file"
+        root = root,
+        path = "${basePath}/file${nextMockIndexItemCount++}.flac"
     )
 }
 
-var nextMockJobId: ULong = 0u;
+var nextMockJobId: ULong = 0u
 
 fun mockTransferJobModel(
     progress: TransferJobProgressModel = mockTransferJobProgressModelInProgress(),

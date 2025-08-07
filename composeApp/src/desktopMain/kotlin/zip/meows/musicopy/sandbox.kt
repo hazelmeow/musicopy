@@ -4,10 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.DpSize
@@ -16,9 +12,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.composeunstyled.Text
-import zip.meows.musicopy.ui.screens.ConnectManuallyScreen
-import zip.meows.musicopy.ui.screens.ConnectManuallyScreenSandbox
-import zip.meows.musicopy.ui.screens.TransferScreenSandbox
+import zip.meows.musicopy.ui.screens.PreTransferScreenSandbox
 
 fun main() = application {
     val state = rememberWindowState(
@@ -52,5 +46,5 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
-    TransferScreenSandbox()
+    PreTransferScreenSandbox()
 }

@@ -274,7 +274,7 @@ private fun Job(
 
                     Image(
                         painter = painterResource(Res.drawable.chevron_forward_24px),
-                        contentDescription = "expand icon",
+                        contentDescription = "Expand icon",
                         modifier = Modifier.rotate(degrees),
                         colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface)
                     )

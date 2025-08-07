@@ -29,6 +29,7 @@ import org.jetbrains.compose.resources.painterResource
 import zip.meows.musicopy.AppSettings
 import zip.meows.musicopy.ui.components.DetailBox
 import zip.meows.musicopy.ui.components.DetailItem
+import zip.meows.musicopy.ui.components.SectionHeader
 import zip.meows.musicopy.ui.components.TopBar
 import zip.meows.musicopy.ui.widgetHeadline
 
@@ -141,23 +142,7 @@ fun HomeSection(title: String, content: @Composable () -> Unit) {
             .background(MaterialTheme.colorScheme.surface)
     ) {
         Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.widgetHeadline,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
-            }
+            SectionHeader(title)
 
             Box(
                 modifier = Modifier
