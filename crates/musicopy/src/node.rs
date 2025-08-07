@@ -91,10 +91,13 @@ pub struct ServerModel {
 #[derive(Debug, uniffi::Record)]
 pub struct IndexItemModel {
     pub node_id: String,
-    pub hash_kind: String,
-    pub hash: Vec<u8>,
     pub root: String,
     pub path: String,
+
+    pub hash_kind: String,
+    pub hash: Vec<u8>,
+
+    pub file_size: Option<u64>,
 }
 
 /// Model of an outgoing connection.
@@ -544,10 +547,13 @@ impl Node {
                                 .iter()
                                 .map(|item| IndexItemModel {
                                     node_id: node_id.to_string(),
-                                    hash_kind: item.hash_kind.clone(),
-                                    hash: item.hash.clone(),
                                     root: item.root.clone(),
                                     path: item.path.clone(),
+
+                                    hash_kind: item.hash_kind.clone(),
+                                    hash: item.hash.clone(),
+
+                                    file_size: item.file_size,
                                 })
                                 .collect()
                         })
@@ -756,6 +762,19 @@ struct IndexItem {
 
     hash_kind: String,
     hash: Vec<u8>,
+
+    file_size: Option<u64>,
+}
+
+/// An update to an item in the index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum IndexUpdateItem {
+    FileSize {
+        hash_kind: String,
+        hash: Vec<u8>,
+
+        file_size: u64,
+    },
 }
 
 /// A job that changed status.
@@ -775,6 +794,8 @@ enum ServerMessage {
     Accepted,
     /// Inform the client of available files.
     Index(Vec<IndexItem>),
+    /// Inform the client of updates to the index.
+    IndexUpdate(Vec<IndexUpdateItem>),
     /// Notify the client that the statuses of jobs have changed.
     JobStatus(HashMap<u64, JobStatusItem>),
 }
@@ -1009,13 +1030,14 @@ impl Server {
             .expect("failed to send Accepted message");
 
         // send Index message
-        let index = self.get_index()?;
-        send.send(ServerMessage::Index(index))
+        let mut index = self.get_index()?;
+        send.send(ServerMessage::Index(index.clone()))
             .await
             .expect("failed to send Index message");
 
         // spawn task to watch for finished transcodes
         // TODO: shutdown signal
+        // TODO: could maybe be a timer instead of a task with a sleep loop
         tokio::spawn({
             let jobs = self.jobs.clone();
             let transcode_status_cache = self.transcode_status_cache.clone();
@@ -1116,6 +1138,8 @@ impl Server {
                 }
             }
         });
+
+        let mut index_update_interval = tokio::time::interval(Duration::from_secs(1));
 
         // main loop
         loop {
@@ -1350,6 +1374,44 @@ impl Server {
                     }
                 }
 
+                // periodically check for index updates
+                _ = index_update_interval.tick() => {
+                    let mut updates = Vec::new();
+
+                    for item in index.iter_mut() {
+                        // if the client doesn't have the file size
+                        if item.file_size.is_none() {
+                            // try to get file size from transcode status cache
+                            let file_size = self
+                                .transcode_status_cache
+                                .get(&item.hash_kind, &item.hash)
+                                .and_then(|entry| match &*entry {
+                                    TranscodeStatus::Ready { file_size, .. } => Some(*file_size),
+                                    _ => None,
+                                });
+
+                            // if we now have the file size, update the client
+                            if let Some(file_size) = file_size {
+                                // store client's view so we don't send the same update again
+                                item.file_size = Some(file_size);
+
+                                updates.push(IndexUpdateItem::FileSize {
+                                    hash_kind: item.hash_kind.clone(),
+                                    hash: item.hash.clone(),
+
+                                    file_size,
+                                });
+                            }
+                        }
+                    }
+
+                    if !updates.is_empty() {
+                        send.send(ServerMessage::IndexUpdate(updates))
+                            .await
+                            .expect("failed to send IndexUpdate message");
+                    }
+                }
+
                 else => {
                     log::warn!("all senders dropped in Server::run, shutting down");
                     break;
@@ -1363,19 +1425,37 @@ impl Server {
     }
 
     fn get_index(&self) -> anyhow::Result<Vec<IndexItem>> {
-        let db = self.db.lock().unwrap();
-        let files = db.get_files()?;
-        Ok(files
-            .into_iter()
-            .map(|file| IndexItem {
-                node_id: file.node_id,
-                root: file.root,
-                path: file.path,
+        let files = {
+            let db = self.db.lock().unwrap();
+            db.get_files()?
+        };
 
-                hash_kind: file.hash_kind,
-                hash: file.hash,
+        let index = files
+            .into_iter()
+            .map(|file| {
+                // get file size from transcode status cache
+                let file_size = self
+                    .transcode_status_cache
+                    .get(&file.hash_kind, &file.hash)
+                    .and_then(|entry| match &*entry {
+                        TranscodeStatus::Ready { file_size, .. } => Some(*file_size),
+                        _ => None,
+                    });
+
+                IndexItem {
+                    node_id: file.node_id,
+                    root: file.root,
+                    path: file.path,
+
+                    hash_kind: file.hash_kind,
+                    hash: file.hash,
+
+                    file_size,
+                }
             })
-            .collect())
+            .collect::<Vec<_>>();
+
+        Ok(index)
     }
 }
 
@@ -1786,6 +1866,26 @@ impl Client {
                                     {
                                         let mut index = self.index.lock().unwrap();
                                         *index = Some(new_index);
+                                    }
+                                }
+
+                                ServerMessage::IndexUpdate(updates) => {
+                                    log::info!("received index update with {} items", updates.len());
+                                    {
+                                        let mut index = self.index.lock().unwrap();
+                                        let Some(index) = &mut *index else { continue };
+                                        for update in updates {
+                                            match update {
+                                                IndexUpdateItem::FileSize { hash_kind, hash, file_size } => {
+                                                    // TODO: don't be exponential
+                                                    for item in index.iter_mut() {
+                                                        if item.hash_kind == hash_kind && item.hash == hash {
+                                                            item.file_size = Some(file_size);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
