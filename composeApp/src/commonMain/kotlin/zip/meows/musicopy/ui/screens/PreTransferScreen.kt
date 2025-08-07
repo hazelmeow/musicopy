@@ -33,11 +33,13 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.fastJoinToString
 import musicopy.composeapp.generated.resources.Res
 import musicopy.composeapp.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
 import uniffi.musicopy.IndexItemModel
+import zip.meows.musicopy.formatFloat
 import zip.meows.musicopy.mockClientModel
 import zip.meows.musicopy.ui.components.DetailBox
 import zip.meows.musicopy.ui.components.DetailItem
@@ -52,6 +54,27 @@ fun PreTransferScreen(
     onDownloadAll: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val numFolders by remember {
+        derivedStateOf {
+            countIndexFolders(
+                clientModel.index ?: emptyList()
+            )
+        }
+    }
+    val numFiles by remember {
+        derivedStateOf {
+            clientModel.index?.size ?: 0
+        }
+    }
+    val totalSize by remember {
+        derivedStateOf {
+            clientModel.index?.let { index ->
+                index.sumOf { item -> item.fileSize ?: 0u }
+            } ?: 0u
+        }
+    }
+    val totalSizeGB = totalSize.toFloat() / 1_000_000_000f
+
     Scaffold(
         topBar = {
             TopBar(
@@ -69,9 +92,9 @@ fun PreTransferScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 DetailBox {
-                    DetailItem("Folders", "123")
-                    DetailItem("Files", "456")
-                    DetailItem("Total Size", "4.27 GB")
+                    DetailItem("Folders", "$numFolders")
+                    DetailItem("Files", "$numFiles")
+                    DetailItem("Total Size", "${formatFloat(totalSizeGB, 1)} GB")
                 }
 
                 Button(
@@ -107,7 +130,7 @@ fun PreTransferScreen(
 @Composable
 internal fun Tree(clientModel: ClientModel) {
     // build node graph
-    val toplevelNodes by remember {
+    val topLevelNodes by remember {
         derivedStateOf {
             buildTree(clientModel.index ?: emptyList())
         }
@@ -116,8 +139,8 @@ internal fun Tree(clientModel: ClientModel) {
     val expanded = remember {
         val expanded = mutableStateListOf<TreeNode>()
 
-        // expand toplevel nodes if they contain only non-leaves
-        for (node in toplevelNodes) {
+        // expand top level nodes if they contain only non-leaves
+        for (node in topLevelNodes) {
             if (node.children.all { child -> child.leaf == null }) {
                 expanded.add(node)
             }
@@ -129,9 +152,9 @@ internal fun Tree(clientModel: ClientModel) {
     val selected = remember { mutableStateListOf<IndexItemModel>() }
 
     LazyColumn {
-        toplevelNodes.forEach { toplevelNode ->
+        topLevelNodes.forEach { topLevelNode ->
             renderNode(
-                node = toplevelNode,
+                node = topLevelNode,
                 isExpanded = { node ->
                     expanded.contains(node)
                 },
@@ -449,6 +472,23 @@ internal data class TreeNode(
     val children: MutableList<TreeNode> = mutableListOf(),
     val leaf: IndexItemModel? = null,
 )
+
+internal fun countIndexFolders(index: List<IndexItemModel>): Int {
+    val seen = mutableSetOf<String>()
+
+    for (item in index) {
+        // split by / and drop last part
+        val path = item.path.removePrefix("/")
+        val parts = path.split('/')
+        val pathParts = parts.dropLast(1)
+
+        // count unique
+        val key = pathParts.joinToString("/")
+        seen.add(key)
+    }
+
+    return seen.size
+}
 
 @Composable
 fun PreTransferScreenSandbox() {

@@ -123,10 +123,13 @@ fun mockIndexItemModel(
 ): IndexItemModel {
     return IndexItemModel(
         nodeId = nodeId,
+        root = root,
+        path = "${basePath}/file${nextMockIndexItemCount++}.flac",
+
         hashKind = "test",
         hash = byteArrayOf(12, 34),
-        root = root,
-        path = "${basePath}/file${nextMockIndexItemCount++}.flac"
+
+        fileSize = 12345678u,
     )
 }
 
