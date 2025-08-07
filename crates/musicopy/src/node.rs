@@ -145,6 +145,14 @@ pub struct NodeModel {
     pub trusted_nodes: Vec<String>,
 }
 
+/// Model of an item selected to be downloaded.
+#[derive(Debug, uniffi::Record)]
+pub struct DownloadPartialItemModel {
+    pub node_id: String,
+    pub root: String,
+    pub path: String,
+}
+
 #[derive(Debug)]
 pub enum NodeCommand {
     SetDownloadDirectory(String),
@@ -162,6 +170,10 @@ pub enum NodeCommand {
 
     DownloadAll {
         client: NodeId,
+    },
+    DownloadPartial {
+        client: NodeId,
+        items: Vec<DownloadPartialItemModel>,
     },
 
     TrustNode(NodeId),
@@ -331,6 +343,7 @@ impl Node {
                                 }
                             };
 
+                            // send command to target client
                             let clients = self.clients.lock().unwrap();
                             if let Some(client_handle) = clients.get(&client) {
                                 client_handle.tx.send(ClientCommand::DownloadAll).expect("failed to send ClientCommand::DownloadAll");
@@ -338,6 +351,24 @@ impl Node {
                                 log::error!("DownloadAll: no client found with node_id: {client}");
                             }
                         },
+                        NodeCommand::DownloadPartial { client, items } => {
+                            // check that download directory is set before downloading
+                            {
+                                let download_directory = self.download_directory.lock().unwrap();
+                                if download_directory.is_none() {
+                                    log::error!("DownloadPartial: download directory not set");
+                                    continue;
+                                }
+                            };
+
+                            // send command to target client
+                            let clients = self.clients.lock().unwrap();
+                            if let Some(client_handle) = clients.get(&client) {
+                                client_handle.tx.send(ClientCommand::DownloadPartial { items }).expect("failed to send ClientCommand::DownloadPartial");
+                            } else {
+                                log::error!("DownloadPartial: no client found with node_id: {client}");
+                            }
+                        }
 
                         NodeCommand::TrustNode(node_id) => {
                             // add to in-memory list
@@ -1520,6 +1551,9 @@ enum ClientCommand {
     Close,
 
     DownloadAll,
+    DownloadPartial {
+        items: Vec<DownloadPartialItemModel>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1800,6 +1834,9 @@ impl Client {
                         ClientCommand::DownloadAll => {
                             log::warn!("unexpected DownloadAll command in waiting loop");
                         }
+                        ClientCommand::DownloadPartial { .. } => {
+                            log::warn!("unexpected DownloadPartial command in waiting loop");
+                        }
                     }
                 }
 
@@ -1874,6 +1911,37 @@ impl Client {
                                     root: file.root,
                                     path: file.path,
                                 }
+                            }).collect::<Vec<_>>();
+
+                            // send download request
+                            send.send(ClientMessage::Download(download_requests))
+                                .await
+                                .expect("failed to send Download message");
+                        }
+                        ClientCommand::DownloadPartial { items } => {
+                            // create jobs and download request items
+                            let download_requests = items.into_iter().flat_map(|item| {
+                                let Ok(file_node_id) = item.node_id.parse() else {
+                                    log::warn!("DownloadPartial: invalid node ID");
+                                    return None;
+                                };
+
+                                let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+
+                                self.jobs.insert(job_id, ClientTransferJob {
+                                    progress: ClientTransferJobProgress::Requested,
+                                    file_node_id,
+                                    file_root: item.root.clone(),
+                                    file_path: item.path.clone(),
+                                });
+
+                                Some(DownloadItem {
+                                    job_id,
+
+                                    node_id: file_node_id,
+                                    root: item.root,
+                                    path: item.path,
+                                })
                             }).collect::<Vec<_>>();
 
                             // send download request

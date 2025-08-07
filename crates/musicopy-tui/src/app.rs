@@ -3,7 +3,7 @@ use crate::{
     ui::log::LogState,
 };
 use anyhow::Context;
-use musicopy::{Core, CoreOptions, Model};
+use musicopy::{Core, CoreOptions, Model, node::DownloadPartialItemModel};
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
@@ -335,6 +335,7 @@ impl<'a> App<'a> {
                 let Some(model) = &self.model else {
                     anyhow::bail!("model not initialized");
                 };
+
                 let node_id = model
                     .node
                     .clients
@@ -350,6 +351,66 @@ impl<'a> App<'a> {
                 let core = self.core.clone();
                 tokio::spawn(async move {
                     if let Err(e) = core.download_all(&node_id, "/tmp/musicopy-dl") {
+                        app_log!("error downloading from client {}: {e:#}", client_num);
+                    }
+                });
+            }
+
+            "dlrand" => {
+                if parts.len() < 2 {
+                    anyhow::bail!("usage: dlrand <client #>");
+                }
+
+                let client_num = parts[1]
+                    .parse::<usize>()
+                    .context("failed to parse client number")?;
+
+                if client_num == 0 {
+                    anyhow::bail!("client number must be greater than 0");
+                }
+
+                let Some(model) = &self.model else {
+                    anyhow::bail!("model not initialized");
+                };
+
+                let client_model = model
+                    .node
+                    .clients
+                    .iter()
+                    .filter(|c| c.accepted)
+                    .nth(client_num - 1)
+                    .ok_or_else(|| anyhow::anyhow!("client number out of range"))?;
+
+                let node_id = client_model.node_id.to_string();
+
+                let items = client_model
+                    .index
+                    .as_ref()
+                    .ok_or(anyhow::anyhow!("client index not available"))?
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, item)| {
+                        if i % 3 == 0 {
+                            Some(DownloadPartialItemModel {
+                                node_id: node_id.clone(),
+                                root: item.root.clone(),
+                                path: item.path.clone(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                app_log!(
+                    "downloading {} items randomly from client: {}",
+                    items.len(),
+                    client_num
+                );
+
+                let core = self.core.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = core.download_partial(&node_id, items, "/tmp/musicopy-dl") {
                         app_log!("error downloading from client {}: {e:#}", client_num);
                     }
                 });
