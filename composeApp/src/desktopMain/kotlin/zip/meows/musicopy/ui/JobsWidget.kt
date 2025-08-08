@@ -70,29 +70,24 @@ fun JobsWidget(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    AnimatedVisibility(transcodesNotReady > 0) {
-                        TranscodeJob(model.library)
-                    }
+                AnimatedVisibility(transcodesNotReady > 0) {
+                    TranscodeJob(model.library)
+                }
 
-                    AnimatedList(
-                        activeServers,
-                        itemKey = { it.nodeId },
-                    ) { connection ->
-                        ActiveConnectionJob(
-                            connection
-                        )
-                    }
+                AnimatedList(
+                    activeServers,
+                    itemKey = { it.nodeId },
+                ) { connection ->
+                    ActiveConnectionJob(
+                        connection
+                    )
+                }
 
-                    AnimatedList(
-                        activeServers.filter { it.transferJobs.any { job -> job.progress !is TransferJobProgressModel.Finished } },
-                        itemKey = { it.nodeId },
-                    ) { connection ->
-                        ActiveTransferJob(connection)
-                    }
+                AnimatedList(
+                    activeServers.filter { it.transferJobs.any { job -> job.progress !is TransferJobProgressModel.Finished } },
+                    itemKey = { it.nodeId },
+                ) { connection ->
+                    ActiveTransferJob(connection)
                 }
             }
         }
@@ -253,9 +248,6 @@ private fun Job(
     val degrees by animateFloatAsState(if (expanded) 90f else 0f)
     Card(
         modifier = Modifier.fillMaxWidth().then(modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        )
     ) {
         Column {
             Row(

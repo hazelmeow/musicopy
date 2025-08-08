@@ -119,7 +119,7 @@ fun HomeScreen(
                                 modifier = Modifier.size(48.dp)
                             )
 
-                            Text("Connect manually", style = MaterialTheme.typography.bodyLarge)
+                            Text("Enter manually", style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }

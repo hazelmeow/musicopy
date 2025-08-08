@@ -187,49 +187,41 @@ fun LibraryWidget(
 private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        )
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
+            modifier = Modifier.padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(modifier = Modifier.padding(start = 8.dp)) {
+                Text(
+                    "${root.name} (${root.numFiles})",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text("${root.path}", style = MaterialTheme.typography.labelMedium)
+            }
+
+            Box(modifier = Modifier.weight(1f))
+
+            IconButton(
+                onClick = {
+                    // TODO
+                },
             ) {
-                Column(modifier = Modifier.padding(start = 8.dp)) {
-                    Text(
-                        "${root.name} (${root.numFiles})",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                    Text("${root.path}", style = MaterialTheme.typography.labelMedium)
-                }
+                Icon(
+                    painter = painterResource(Res.drawable.content_copy_24px),
+                    contentDescription = "Open button"
+                )
+            }
 
-                Box(modifier = Modifier.weight(1f))
-
-                IconButton(
-                    onClick = {
-                        // TODO
-                    },
-                ) {
-                    Icon(
-                        painter = painterResource(Res.drawable.content_copy_24px),
-                        contentDescription = "Open button"
-                    )
-                }
-
-                IconButton(
-                    onClick = { onStartRemoveRoot(root.name) },
-                ) {
-                    Icon(
-                        painter = painterResource(Res.drawable.content_copy_24px),
-                        contentDescription = "Remove button"
-                    )
-                }
+            IconButton(
+                onClick = { onStartRemoveRoot(root.name) },
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.content_copy_24px),
+                    contentDescription = "Remove button"
+                )
             }
         }
-
     }
 }
 
