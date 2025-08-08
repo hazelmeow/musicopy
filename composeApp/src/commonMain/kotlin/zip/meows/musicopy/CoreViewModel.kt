@@ -26,7 +26,7 @@ class CoreViewModel(private val platformContext: PlatformContext) : ViewModel(),
 
     private val _instance = Core(
         eventHandler = this,
-        options = CoreProvider.getOptions()
+        options = CoreProvider.getOptions(platformContext)
     )
     val instance: Core
         get() = _instance

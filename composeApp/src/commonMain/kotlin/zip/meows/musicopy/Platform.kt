@@ -10,10 +10,11 @@ expect class PlatformContext private constructor() {
 expect fun toClipEntry(string: String): ClipEntry
 
 interface ICoreProvider {
-    fun getOptions(): CoreOptions {
+    fun getOptions(platformContext: PlatformContext): CoreOptions {
         return CoreOptions(
             initLogging = true,
-            inMemory = false
+            inMemory = false,
+            projectDirs = null,
         )
     }
 }

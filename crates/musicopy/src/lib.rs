@@ -16,6 +16,7 @@ use anyhow::Context;
 use iroh::{NodeAddr, NodeId, SecretKey};
 use log::{debug, error};
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -37,9 +38,16 @@ pub trait EventHandler: Send + Sync {
 }
 
 #[derive(Debug, uniffi::Record)]
+pub struct ProjectDirsOptions {
+    pub data_dir: String,
+    pub cache_dir: String,
+}
+
+#[derive(Debug, uniffi::Record)]
 pub struct CoreOptions {
     pub init_logging: bool,
     pub in_memory: bool,
+    pub project_dirs: Option<ProjectDirsOptions>,
 }
 
 /// Long-lived object created by Compose as the entry point to the Rust core.
@@ -94,10 +102,7 @@ impl Core {
 
         debug!("core: starting core");
 
-        // TODO: pass arg for android dir
-        let in_memory = cfg!(target_os = "android") || options.in_memory;
-
-        let (db, secret_key, transcodes_dir) = if in_memory {
+        let (db, secret_key, transcodes_dir) = if options.in_memory {
             let db = Database::open_in_memory().context("failed to open database")?;
 
             let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -112,11 +117,25 @@ impl Core {
 
             (db, secret_key, transcodes_dir)
         } else {
-            let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")
-                .context("failed to get project directories")?;
-            let data_dir = project_dirs.data_local_dir();
+            let (data_dir, cache_dir) = match options.project_dirs {
+                Some(project_dirs) => (
+                    PathBuf::from(project_dirs.data_dir),
+                    PathBuf::from(project_dirs.cache_dir),
+                ),
+                None => {
+                    let project_dirs = directories_next::ProjectDirs::from("", "", "musicopy")
+                        .context("failed to get project directories")?;
+                    let data_dir = project_dirs.data_local_dir().to_owned();
+                    let cache_dir = project_dirs.cache_dir().to_owned();
 
-            std::fs::create_dir_all(data_dir).context("failed to create data directory")?;
+                    std::fs::create_dir_all(&data_dir)
+                        .context("failed to create data directory")?;
+                    std::fs::create_dir_all(&cache_dir)
+                        .context("failed to create cache directory")?;
+
+                    (data_dir, cache_dir)
+                }
+            };
 
             let db = Database::open_file(&data_dir.join("musicopy.db"))
                 .context("failed to open database")?;
@@ -137,10 +156,7 @@ impl Core {
                 new_key
             };
 
-            let transcodes_dir = {
-                let cache_dir = project_dirs.cache_dir();
-                cache_dir.join("transcodes")
-            };
+            let transcodes_dir = cache_dir.join("transcodes");
 
             (db, secret_key, transcodes_dir)
         };
