@@ -76,6 +76,12 @@ fun App(
         Unit
     }
 
+    val leaveClientScreen = { nodeId: String ->
+        viewModel.instance.closeClient(nodeId)
+
+        navController.popBackStack(Home, inclusive = false)
+    }
+
     val nodeStatusSheetState = rememberNodeStatusSheetState()
     NodeStatusSheet(nodeStatusSheetState, model)
     val onShowNodeStatus = { nodeStatusSheetState.peek() }
@@ -173,7 +179,7 @@ fun App(
 
                             clientModel = clientModel,
                             onCancel = {
-                                navController.popBackStack(Home, inclusive = false)
+                                leaveClientScreen(nodeId)
                             }
                         )
                     }
@@ -217,7 +223,7 @@ fun App(
                                 }
                             },
                             onCancel = {
-                                navController.popBackStack(Home, inclusive = false)
+                                leaveClientScreen(nodeId)
                             }
                         )
                     }
@@ -235,7 +241,8 @@ fun App(
 
                             clientModel = clientModel,
                             onCancel = {
-                                navController.popBackStack(Home, inclusive = false)
+                                // pop back to pretransfer
+                                navController.popBackStack(PreTransfer(nodeId), inclusive = false)
                             }
                         )
                     }
