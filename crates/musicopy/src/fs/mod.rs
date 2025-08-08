@@ -15,7 +15,7 @@
 #[cfg(target_os = "android")]
 mod android;
 
-use std::{path::PathBuf, pin::Pin};
+use std::{borrow::Cow, path::PathBuf, pin::Pin};
 use tokio::{
     fs::{File as TokioFile, OpenOptions},
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
@@ -68,6 +68,10 @@ impl TreePath {
             tree: self.tree.clone(),
             path: new_path,
         }
+    }
+
+    pub fn extension(&self) -> Option<Cow<'_, str>> {
+        self.path.extension().map(|s| s.to_string_lossy())
     }
 
     pub fn set_extension(&mut self, extension: &str) {

@@ -108,8 +108,14 @@ pub fn open_or_create_file(
                 anyhow::bail!("file not found: {:?}", path);
             }
 
-            // TODO
-            let mime_type_string = env.new_string("text/plain")?;
+            let mime_type = match path.extension().as_deref() {
+                Some("ogg") => "audio/ogg",
+                Some("opus") => "audio/ogg",
+                Some("flac") => "audio/flac",
+                Some("txt") => "text/plain",
+                _ => "application/octet-stream",
+            };
+            let mime_type_string = env.new_string(mime_type)?;
             let filename = env.new_string(filename)?;
 
             let document_uri = DocumentsContract::jni_create_document(
