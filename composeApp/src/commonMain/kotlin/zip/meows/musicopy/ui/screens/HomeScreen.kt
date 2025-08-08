@@ -51,16 +51,22 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(modifier = Modifier.padding(8.dp)) {
+                val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                    null
+                )
+
                 DetailBox(
-                    actionLabel = "Change",
+                    actionLabel = if (downloadDirectory == null) {
+                        "Choose"
+                    } else {
+                        "Change"
+                    },
                     onAction = onPickDownloadDirectory,
                 ) {
-                    val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
-                        null
-                    )
-
                     downloadDirectory?.let { downloadDirectory ->
                         DetailItem("Download Folder", downloadDirectory)
+                    } ?: run {
+                        DetailItem("Download Folder", "Not selected")
                     }
                 }
             }
