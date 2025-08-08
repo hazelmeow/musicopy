@@ -77,6 +77,7 @@ impl<'a> App<'a> {
             CoreOptions {
                 init_logging: false,
                 in_memory,
+                project_dirs: None,
             },
         )?;
 
