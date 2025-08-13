@@ -413,7 +413,7 @@ impl Core {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
-pub extern "system" fn Java_zip_meows_musicopy_RustNdkContext_init(
+pub extern "system" fn Java_app_musicopy_RustNdkContext_init(
     env: jni::JNIEnv,
     _class: jni::objects::JClass,
     context: jni::objects::JObject,

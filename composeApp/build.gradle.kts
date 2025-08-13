@@ -87,11 +87,11 @@ kotlin {
 val appVersionCode = System.getenv("APP_VERSION_CODE")?.toInt() ?: 1
 
 android {
-    namespace = "zip.meows.musicopy"
+    namespace = "app.musicopy"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "zip.meows.musicopy"
+        applicationId = "app.musicopy"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = appVersionCode
@@ -119,11 +119,11 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "zip.meows.musicopy.MainKt"
+        mainClass = "app.musicopy.MainKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "zip.meows.musicopy"
+            packageName = "app.musicopy"
             packageVersion = "1.0.0"
         }
     }
