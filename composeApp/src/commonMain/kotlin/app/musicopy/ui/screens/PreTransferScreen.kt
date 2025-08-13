@@ -34,8 +34,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.chevron_forward_24px
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.ClientModel
 import uniffi.musicopy.DownloadPartialItemModel

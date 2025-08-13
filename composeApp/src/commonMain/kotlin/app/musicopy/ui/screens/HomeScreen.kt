@@ -23,8 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
-import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.content_copy_24px
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import app.musicopy.AppSettings
 import app.musicopy.ui.components.DetailBox

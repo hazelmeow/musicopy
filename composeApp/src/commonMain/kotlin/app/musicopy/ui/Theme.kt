@@ -8,9 +8,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import musicopy.composeapp.generated.resources.InterVariable
-import musicopy.composeapp.generated.resources.REM_Variable
-import musicopy.composeapp.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.InterVariable
+import musicopy_root.musicopy.generated.resources.REM_Variable
+import musicopy_root.musicopy.generated.resources.Res
 import org.jetbrains.compose.resources.Font
 
 @Composable

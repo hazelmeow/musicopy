@@ -35,9 +35,9 @@ import com.composables.core.DialogState
 import com.composables.core.Scrim
 import com.composables.core.rememberDialogState
 import kotlinx.coroutines.launch
-import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.cell_tower_24px
-import musicopy.composeapp.generated.resources.content_copy_24px
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.cell_tower_24px
+import musicopy_root.musicopy.generated.resources.content_copy_24px
 import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.CoreException

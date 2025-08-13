@@ -37,8 +37,8 @@ import io.github.alexzhirkevich.qrose.QrData
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import io.github.alexzhirkevich.qrose.text
 import kotlinx.coroutines.runBlocking
-import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.content_copy_24px
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.content_copy_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 import app.musicopy.shortenNodeId

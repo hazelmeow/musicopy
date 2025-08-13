@@ -9,9 +9,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.style.TextOverflow
-import musicopy.composeapp.generated.resources.Res
-import musicopy.composeapp.generated.resources.arrow_back_24px
-import musicopy.composeapp.generated.resources.network_node_24px
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.arrow_back_24px
+import musicopy_root.musicopy.generated.resources.network_node_24px
 import org.jetbrains.compose.resources.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class)

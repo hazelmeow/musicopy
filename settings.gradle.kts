@@ -1,4 +1,4 @@
-rootProject.name = "Musicopy"
+rootProject.name = "musicopy-root"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
@@ -33,3 +33,4 @@ plugins {
 }
 
 include(":composeApp")
+project(":composeApp").name = "musicopy"
