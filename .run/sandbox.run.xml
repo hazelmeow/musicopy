@@ -10,7 +10,7 @@
             </option>
             <option name="taskNames">
                 <list>
-                    <option value=":composeApp:desktopRunHot --autoReload" />
+                    <option value=":musicopy:desktopRunHot --autoReload" />
                 </list>
             </option>
             <option name="vmOptions" />
