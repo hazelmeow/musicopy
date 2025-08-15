@@ -11,8 +11,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.musicopy.ui.Theme
 import com.composeunstyled.Text
 import app.musicopy.ui.screens.PreTransferScreenSandbox
+import app.musicopy.ui.screens.TransferScreenSandbox
 
 fun main() = application {
     val state = rememberWindowState(
@@ -39,12 +41,12 @@ fun main() = application {
 private fun Sandbox(
     platformContext: PlatformContext,
 ) {
-    MaterialTheme {
+    Theme {
         SandboxContent()
     }
 }
 
 @Composable
 private fun SandboxContent() {
-    PreTransferScreenSandbox()
+    TransferScreenSandbox()
 }

@@ -23,14 +23,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
-import musicopy_root.musicopy.generated.resources.Res
-import musicopy_root.musicopy.generated.resources.content_copy_24px
-import org.jetbrains.compose.resources.painterResource
 import app.musicopy.AppSettings
 import app.musicopy.ui.components.DetailBox
 import app.musicopy.ui.components.DetailItem
 import app.musicopy.ui.components.SectionHeader
 import app.musicopy.ui.components.TopBar
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.input_24px
+import musicopy_root.musicopy.generated.resources.qr_code_scanner_24px
+import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun HomeScreen(
@@ -94,8 +95,8 @@ fun HomeScreen(
                             )
                         ) {
                             Icon(
-                                painter = painterResource(Res.drawable.content_copy_24px),
-                                contentDescription = "QR code icon",
+                                painter = painterResource(Res.drawable.qr_code_scanner_24px),
+                                contentDescription = "Scan QR code icon",
                                 modifier = Modifier.size(48.dp)
                             )
 
@@ -119,8 +120,8 @@ fun HomeScreen(
                             )
                         ) {
                             Icon(
-                                painter = painterResource(Res.drawable.content_copy_24px),
-                                contentDescription = "QR code icon",
+                                painter = painterResource(Res.drawable.input_24px),
+                                contentDescription = "Enter manually icon",
                                 modifier = Modifier.size(48.dp)
                             )
 

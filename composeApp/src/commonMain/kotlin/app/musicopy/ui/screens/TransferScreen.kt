@@ -39,18 +39,21 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import musicopy_root.musicopy.generated.resources.Res
-import musicopy_root.musicopy.generated.resources.chevron_forward_24px
-import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.ClientModel
-import uniffi.musicopy.TransferJobModel
-import uniffi.musicopy.TransferJobProgressModel
 import app.musicopy.formatFloat
 import app.musicopy.mockClientModel
 import app.musicopy.ui.components.TopBar
 import app.musicopy.ui.widgetHeadline
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.check_circle_24px
+import musicopy_root.musicopy.generated.resources.chevron_forward_24px
+import musicopy_root.musicopy.generated.resources.error_24px
+import musicopy_root.musicopy.generated.resources.pending_24px
+import org.jetbrains.compose.resources.painterResource
+import uniffi.musicopy.ClientModel
+import uniffi.musicopy.TransferJobModel
+import uniffi.musicopy.TransferJobProgressModel
 
 @Composable
 fun TransferScreen(
@@ -183,7 +186,7 @@ fun TransferJob(job: TransferJobModel) {
                 when (progress) {
                     is TransferJobProgressModel.Requested, is TransferJobProgressModel.Transcoding, is TransferJobProgressModel.Ready -> {
                         Icon(
-                            painter = painterResource(Res.drawable.chevron_forward_24px),
+                            painter = painterResource(Res.drawable.pending_24px),
                             contentDescription = null,
                         )
                     }
@@ -213,14 +216,14 @@ fun TransferJob(job: TransferJobModel) {
 
                     is TransferJobProgressModel.Finished -> {
                         Icon(
-                            painter = painterResource(Res.drawable.chevron_forward_24px),
+                            painter = painterResource(Res.drawable.check_circle_24px),
                             contentDescription = null,
                         )
                     }
 
                     is TransferJobProgressModel.Failed -> {
                         Icon(
-                            painter = painterResource(Res.drawable.chevron_forward_24px),
+                            painter = painterResource(Res.drawable.error_24px),
                             contentDescription = null,
                         )
                     }

@@ -29,6 +29,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.musicopy.ui.components.Info
+import app.musicopy.ui.components.WidgetContainer
 import com.composables.core.Dialog
 import com.composables.core.DialogPanel
 import com.composables.core.DialogState
@@ -36,16 +38,16 @@ import com.composables.core.Scrim
 import com.composables.core.rememberDialogState
 import kotlinx.coroutines.launch
 import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.add_24px
 import musicopy_root.musicopy.generated.resources.cell_tower_24px
-import musicopy_root.musicopy.generated.resources.content_copy_24px
+import musicopy_root.musicopy.generated.resources.close_24px
+import musicopy_root.musicopy.generated.resources.folder_open_24px
 import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.CoreException
 import uniffi.musicopy.LibraryRootModel
 import uniffi.musicopy.Model
 import uniffi.musicopy.pickFolder
-import app.musicopy.ui.components.Info
-import app.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun LibraryWidget(
@@ -143,7 +145,7 @@ fun LibraryWidget(
                         onClick = onStartAddRoot,
                     ) {
                         Icon(
-                            painter = painterResource(Res.drawable.content_copy_24px),
+                            painter = painterResource(Res.drawable.add_24px),
                             contentDescription = "Add library folder icon",
                             modifier = Modifier.size(20.dp)
                         )
@@ -206,7 +208,7 @@ private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> U
                 },
             ) {
                 Icon(
-                    painter = painterResource(Res.drawable.content_copy_24px),
+                    painter = painterResource(Res.drawable.folder_open_24px),
                     contentDescription = "Open button"
                 )
             }
@@ -215,7 +217,7 @@ private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> U
                 onClick = { onStartRemoveRoot(root.name) },
             ) {
                 Icon(
-                    painter = painterResource(Res.drawable.content_copy_24px),
+                    painter = painterResource(Res.drawable.close_24px),
                     contentDescription = "Remove button"
                 )
             }
@@ -238,8 +240,8 @@ private fun Empty(onStartAddRoot: () -> Unit) {
                 onClick = onStartAddRoot,
             ) {
                 Icon(
-                    painter = painterResource(Res.drawable.content_copy_24px),
-                    contentDescription = "Add library root button",
+                    painter = painterResource(Res.drawable.add_24px),
+                    contentDescription = "Add library folder button",
                 )
             }
         }
