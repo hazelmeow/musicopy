@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import gobley.gradle.GobleyHost
 import gobley.gradle.cargo.dsl.*
+import gobley.gradle.rust.targets.RustAndroidTarget
+import gobley.gradle.rust.targets.RustTarget
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -16,7 +18,20 @@ plugins {
     id("dev.gobley.rust") version "0.2.0"
     id("dev.gobley.uniffi") version "0.2.0"
     kotlin("plugin.atomicfu") version libs.versions.kotlin
+
+    id("dev.hydraulic.conveyor") version "1.12"
 }
+
+val appVersionCode = System.getenv("APP_VERSION_CODE")?.toInt() ?: 1
+
+val appVersion = "0.1.0"
+
+version = appVersion
+val androidVersionName = appVersion
+val desktopVersionName = appVersion
+
+val macosVersionShort = "1.0"
+val macosVersionBuild = "1.0"
 
 kotlin {
     androidTarget {
@@ -38,6 +53,11 @@ kotlin {
     }
 
     jvm("desktop")
+
+    jvmToolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.JETBRAINS
+    }
 
     sourceSets {
         val desktopMain by getting
@@ -84,8 +104,6 @@ kotlin {
     }
 }
 
-val appVersionCode = System.getenv("APP_VERSION_CODE")?.toInt() ?: 1
-
 android {
     namespace = "app.musicopy"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -95,7 +113,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = appVersionCode
-        versionName = "0.1"
+        versionName = androidVersionName
     }
     packaging {
         resources {
@@ -115,6 +133,12 @@ android {
 
 dependencies {
     debugImplementation(compose.uiTooling)
+
+    // Conveyor
+    linuxAmd64(compose.desktop.linux_x64)
+    macAmd64(compose.desktop.macos_x64)
+    macAarch64(compose.desktop.macos_arm64)
+    windowsAmd64(compose.desktop.windows_x64)
 }
 
 compose.desktop {
@@ -123,8 +147,14 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "app.musicopy"
-            packageVersion = "1.0.0"
+            packageName = "Musicopy"
+
+            packageVersion = desktopVersionName
+
+            macOS {
+                packageVersion = macosVersionShort
+                packageBuildVersion = macosVersionBuild
+            }
         }
     }
 }
@@ -138,11 +168,45 @@ project.gradle.taskGraph.whenReady {
     }
 }
 
+val gobleyRustVariant = when (System.getenv("GOBLEY_RUST_VARIANT")) {
+    "release" -> gobley.gradle.Variant.Release
+    "debug" -> gobley.gradle.Variant.Debug
+    else -> null
+} ?: gobley.gradle.Variant.Debug
+val gobleyRustSkip = System.getenv("GOBLEY_RUST_SKIP") == "true"
+
 cargo {
     packageDirectory = layout.projectDirectory.dir("../crates/musicopy")
 
-    // build desktop for the host target only
+    jvmVariant = gobleyRustVariant
+
+    // skip if GOBLEY_RUST_SKIP is set, otherwise build desktop for the host target only
     builds.jvm {
-        embedRustLibrary = (rustTarget == GobleyHost.current.rustTarget)
+        embedRustLibrary = !gobleyRustSkip && (rustTarget == GobleyHost.current.rustTarget)
     }
 }
+
+val gobleyUniffiTarget = System.getenv("GOBLEY_UNIFFI_TARGET")?.let {
+    RustTarget(it)
+} ?: RustAndroidTarget.Arm64
+val gobleyUniffiVariant = when (System.getenv("GOBLEY_UNIFFI_VARIANT")) {
+    "release" -> gobley.gradle.Variant.Release
+    "debug" -> gobley.gradle.Variant.Debug
+    else -> null
+} ?: gobleyRustVariant
+
+uniffi {
+    generateFromLibrary {
+        build = gobleyUniffiTarget
+        variant = gobleyUniffiVariant
+    }
+}
+
+// region Work around temporary Compose bugs.
+configurations.all {
+    attributes {
+        // https://github.com/JetBrains/compose-jb/issues/1404#issuecomment-1146894731
+        attribute(Attribute.of("ui", String::class.java), "awt")
+    }
+}
+// endregion

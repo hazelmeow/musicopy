@@ -1,0 +1,147 @@
+name: Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ desktop-packaging ]
+
+jobs:
+  build-rust:
+    strategy:
+      matrix:
+        include:
+          - key: linux-x86-64
+            runs-on: ubicloud-standard-8-ubuntu-2404
+            gradle-task: jarJvmRustRuntimeLinuxX64Release
+            target: x86_64-unknown-linux-gnu
+          - key: darwin-x86-64
+            runs-on: macos-latest
+            gradle-task: jarJvmRustRuntimeMacOSX64Release
+            target: x86_64-apple-darwin
+          - key: darwin-aarch64
+            runs-on: macos-latest
+            gradle-task: jarJvmRustRuntimeMacOSArm64Release
+            target: aarch64-apple-darwin
+          - key: win32-x86-64
+            runs-on: windows-latest
+            gradle-task: jarJvmRustRuntimeWindowsX64Release
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Rust
+        run: |
+          rustup install stable
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Set build variables (MacOS, Linux)
+        if: startsWith(matrix.key, 'linux') || startsWith(matrix.key, 'darwin')
+        run: |
+          echo "GOBLEY_RUST_VARIANT=release" >> $GITHUB_ENV
+          echo "GOBLEY_UNIFFI_TARGET=${{ matrix.target }}" >> $GITHUB_ENV
+          echo "GOBLEY_UNIFFI_VARIANT=release" >> $GITHUB_ENV
+
+      - name: Set build variables (Windows)
+        if: startsWith(matrix.key, 'win32')
+        run: |
+          echo "GOBLEY_RUST_VARIANT=release" >> $env:GITHUB_ENV
+          echo "GOBLEY_UNIFFI_TARGET=${{ matrix.target }}" >> $env:GITHUB_ENV
+          echo "GOBLEY_UNIFFI_VARIANT=release" >> $env:GITHUB_ENV
+
+      - name: Build Rust jar
+        run: ./gradlew ${{ matrix.gradle-task }}
+
+      - name: Upload Rust jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-rust-${{ matrix.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: composeApp/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    runs-on: ubicloud-standard-8-ubuntu-2404
+    needs: [build-rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Rust
+        run: |
+          rustup install stable
+          rustup default stable
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Download Rust jar for linux-x86-64
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-rust-linux-x86-64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: composeApp/build/libs
+
+      - name: Download Rust jar for darwin-x86-64
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-rust-darwin-x86-64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: composeApp/build/libs
+
+      - name: Download Rust jar for darwin-aarch64
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-rust-darwin-aarch64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: composeApp/build/libs
+
+      - name: Download Rust jar for win32-x86-64
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-rust-win32-x86-64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: composeApp/build/libs
+
+      - name: Set build variables
+        run: |
+          echo "GOBLEY_RUST_VARIANT=release" >> $GITHUB_ENV
+          echo "GOBLEY_RUST_SKIP=true" >> $GITHUB_ENV
+          echo "GOBLEY_UNIFFI_TARGET=x86_64-unknown-linux-gnu" >> $GITHUB_ENV
+          echo "GOBLEY_UNIFFI_VARIANT=debug" >> $GITHUB_ENV
+
+      - name: Build app
+        run: ./gradlew desktopJar
+
+      - name: Run Conveyor
+        uses: hydraulic-software/conveyor/actions/build@v19.0
+        env:
+          CONVEYOR_CF_ACCOUNT_ID: ${{ secrets.CONVEYOR_CF_ACCOUNT_ID }}
+          CONVEYOR_CF_ACCESS_KEY_ID: ${{ secrets.CONVEYOR_CF_ACCESS_KEY_ID }}
+          CONVEYOR_CF_SECRET_ACCESS_KEY: ${{ secrets.CONVEYOR_CF_SECRET_ACCESS_KEY }}
+        with:
+          command: make copied-site
+          extra_flags: -f ci.conveyor.conf
+          signing_key: ${{ secrets.CONVEYOR_SIGNING_KEY }}
+          agree_to_license: 1
