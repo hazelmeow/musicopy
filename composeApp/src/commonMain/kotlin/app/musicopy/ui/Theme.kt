@@ -1,5 +1,6 @@
 package app.musicopy.ui
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
@@ -12,13 +13,28 @@ import musicopy_root.musicopy.generated.resources.InterVariable
 import musicopy_root.musicopy.generated.resources.REM_Variable
 import musicopy_root.musicopy.generated.resources.Res
 import org.jetbrains.compose.resources.Font
+import zip.meows.musicopy.ui.darkScheme
+import zip.meows.musicopy.ui.lightScheme
 
 @Composable
 fun Theme(content: @Composable () -> Unit) {
     MaterialTheme(
+        colorScheme = appColorScheme(),
         typography = appTypography(),
         content = content,
     )
+}
+
+@Composable
+fun appColorScheme(
+//    darkTheme: Boolean = isSystemInDarkTheme,
+    darkTheme: Boolean = false,
+): ColorScheme {
+    return if (darkTheme) {
+        darkScheme
+    } else {
+        lightScheme
+    }
 }
 
 @Composable

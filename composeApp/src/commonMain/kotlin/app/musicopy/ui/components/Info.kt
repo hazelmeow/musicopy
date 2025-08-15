@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -22,14 +24,14 @@ fun Info(
         Modifier
             .fillMaxWidth()
             .background(
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.secondary,
             )
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .background(
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
                     shape = shape
                 )
                 .border(
@@ -39,7 +41,9 @@ fun Info(
                 )
         ) {
             Column(Modifier.padding(8.dp)) {
-                content()
+                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSecondaryContainer) {
+                    content()
+                }
             }
         }
     }
