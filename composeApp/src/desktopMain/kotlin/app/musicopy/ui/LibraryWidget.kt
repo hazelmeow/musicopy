@@ -363,7 +363,7 @@ private fun RemoveRootDialog(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     Text(
-                        text = "Remove folder from library",
+                        text = "Remove folder from library?",
                         style = MaterialTheme.typography.headlineSmall
                     )
 
@@ -392,7 +392,7 @@ private fun RemoveRootDialog(
                         TextButton(
                             onClick = onConfirm
                         ) {
-                            Text("Confirm")
+                            Text("Remove")
                         }
                     }
                 }
