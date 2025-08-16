@@ -76,7 +76,6 @@ fun ConnectWidget(
 
     WidgetContainer(
         title = title,
-        modifier = Modifier.aspectRatio(1f)
     ) {
         AnimatedContent(
             targetState = nextPending,
@@ -147,11 +146,11 @@ private fun DefaultScreen(
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         if (showHints) {
-        Info {
-            Text(
-                "Scan the QR code using the mobile app to connect.",
-                style = MaterialTheme.typography.bodyMedium
-            )
+            Info {
+                Text(
+                    "Scan the QR code using the mobile app to connect.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
 
