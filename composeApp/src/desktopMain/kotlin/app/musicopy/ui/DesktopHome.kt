@@ -21,6 +21,7 @@ import uniffi.musicopy.Model
 @Composable
 fun DesktopHome(
     model: Model,
+    showHints: Boolean,
     onAcceptAndTrust: (remoteNodeId: String) -> Unit,
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
@@ -53,6 +54,7 @@ fun DesktopHome(
                 )
                 ConnectWidget(
                     model = model,
+                    showHints = showHints,
                     onAcceptAndTrust = onAcceptAndTrust,
                     onAcceptOnce = onAcceptOnce,
                     onDeny = onDeny,

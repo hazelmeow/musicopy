@@ -54,6 +54,7 @@ fun DesktopHomeScreenshot() {
 
     DesktopHome(
         model = model,
+        showHints = false,
         onAcceptAndTrust = {},
         onAcceptOnce = {},
         onDeny = {},

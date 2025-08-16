@@ -60,6 +60,7 @@ import uniffi.musicopy.Model
 @Composable
 fun ConnectWidget(
     model: Model,
+    showHints: Boolean,
     onAcceptAndTrust: (remoteNodeId: String) -> Unit,
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
@@ -112,6 +113,7 @@ fun ConnectWidget(
             } ?: run {
                 DefaultScreen(
                     localNodeId = model.node.nodeId,
+                    showHints = showHints
                 )
             }
         }
@@ -121,6 +123,7 @@ fun ConnectWidget(
 @Composable
 private fun DefaultScreen(
     localNodeId: String,
+    showHints: Boolean,
 ) {
     val downloadAppState = rememberDialogState(initiallyVisible = false)
     DownloadAppDialog(
@@ -143,11 +146,13 @@ private fun DefaultScreen(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
+        if (showHints) {
         Info {
             Text(
                 "Scan the QR code using the mobile app to connect.",
                 style = MaterialTheme.typography.bodyMedium
             )
+            }
         }
 
         Row(

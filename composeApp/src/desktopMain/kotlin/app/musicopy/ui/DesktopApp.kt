@@ -29,6 +29,7 @@ fun DesktopApp(
             model?.let {
                 DesktopHome(
                     model = it,
+                    showHints = true,
                     onAcceptAndTrust = { nodeId ->
                         viewModel.instance.acceptConnectionAndTrust(
                             nodeId
