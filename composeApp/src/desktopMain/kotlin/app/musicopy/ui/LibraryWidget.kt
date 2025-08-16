@@ -8,11 +8,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.IconButton
-import androidx.compose.material.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -229,7 +229,16 @@ private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> U
 private fun Empty(onStartAddRoot: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Info {
-            Text("Lorem ipsum", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Get started by adding a folder to your library.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            Text(
+                "Musicopy will scan its contents and make them available for download.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
 
         Row(

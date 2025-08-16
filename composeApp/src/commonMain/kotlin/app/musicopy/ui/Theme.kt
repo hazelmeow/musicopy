@@ -81,6 +81,10 @@ val Typography.widgetHeadline: TextStyle
         )
     }
 
+val Typography.monospaceMedium: TextStyle
+    @Composable
+    get() = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+
 @Composable
 fun interFontFamily(): FontFamily = FontFamily(Font(Res.font.InterVariable))
 

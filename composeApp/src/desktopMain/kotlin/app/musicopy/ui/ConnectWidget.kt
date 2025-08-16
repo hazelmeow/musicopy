@@ -16,14 +16,17 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,19 +35,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import app.musicopy.shortenNodeId
+import app.musicopy.toClipEntry
+import app.musicopy.ui.components.Info
+import app.musicopy.ui.components.WidgetContainer
+import com.composables.core.Dialog
+import com.composables.core.DialogPanel
+import com.composables.core.DialogState
+import com.composables.core.Scrim
+import com.composables.core.rememberDialogState
 import io.github.alexzhirkevich.qrose.QrData
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 import io.github.alexzhirkevich.qrose.text
 import kotlinx.coroutines.runBlocking
 import musicopy_root.musicopy.generated.resources.Res
 import musicopy_root.musicopy.generated.resources.content_copy_24px
+import musicopy_root.musicopy.generated.resources.input_24px
+import musicopy_root.musicopy.generated.resources.open_in_new_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
-import app.musicopy.shortenNodeId
-import app.musicopy.toClipEntry
-import app.musicopy.ui.components.Info
-import app.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun ConnectWidget(
@@ -111,18 +122,32 @@ fun ConnectWidget(
 private fun DefaultScreen(
     localNodeId: String,
 ) {
+    val downloadAppState = rememberDialogState(initiallyVisible = false)
+    DownloadAppDialog(
+        state = downloadAppState,
+        onClose = {
+            downloadAppState.visible = false
+        }
+    )
+
+    val enterManuallyState = rememberDialogState(initiallyVisible = false)
+    EnterManuallyDialog(
+        state = enterManuallyState,
+        localNodeId = localNodeId,
+        onClose = {
+            enterManuallyState.visible = false
+        }
+    )
+
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Info {
-                Text("help text here ...", style = MaterialTheme.typography.bodyMedium)
-            }
-
-            Info {
-                Text("download mobile app >", style = MaterialTheme.typography.bodyMedium)
-            }
+        Info {
+            Text(
+                "Scan the QR code using the mobile app to connect.",
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
 
         Row(
@@ -134,16 +159,47 @@ private fun DefaultScreen(
                     QrData.text(localNodeId)
                 ),
                 contentDescription = "QR code containing node ID",
-                modifier = Modifier.widthIn(max = 100.dp)
+                modifier = Modifier.widthIn(max = 120.dp)
             )
         }
 
-        Row {
-            Text("${localNodeId.slice(0..<6)}...")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TextButton(
+                onClick = {
+                    downloadAppState.visible = true
+                },
+            ) {
+                Text(
+                    "Download app",
+                    modifier = Modifier.padding(end = 4.dp)
+                )
 
-            CopyIconButton(localNodeId, "Copy node ID")
+                Icon(
+                    painter = painterResource(Res.drawable.open_in_new_24px),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
 
-            Box(modifier = Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    enterManuallyState.visible = true
+                },
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.input_24px),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+
+                Text(
+                    "Enter manually",
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
         }
     }
 }
@@ -198,23 +254,155 @@ private fun PendingScreen(
 }
 
 @Composable
-private fun CopyIconButton(textToCopy: String, contentDescription: String) {
-    val clipboard = LocalClipboard.current
+private fun DownloadAppDialog(
+    state: DialogState,
+    onClose: () -> Unit,
+) {
+    Dialog(state = state, onDismiss = onClose) {
+        Scrim()
+        DialogPanel(
+            modifier = Modifier
+                .widthIn(max = 500.dp)
+                .padding(16.dp)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = "Download mobile app",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
 
-    IconButton(
-        onClick = {
-            runBlocking {
-                val clip = toClipEntry(textToCopy)
-                clipboard.setClipEntry(clip)
-                // not supported in CMP
-                // Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = rememberQrCodePainter(
+                                QrData.text("https://download.musicopy.app")
+                            ),
+                            contentDescription = "QR code containing download link",
+                            modifier = Modifier.widthIn(max = 120.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        val uriHandler = LocalUriHandler.current
+
+                        TextButton(
+                            onClick = {
+                                uriHandler.openUri("https://download.musicopy.app")
+                            },
+                        ) {
+                            Text(
+                                text = "download.musicopy.app",
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+
+                            Icon(
+                                painter = painterResource(Res.drawable.open_in_new_24px),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End),
+                    ) {
+                        TextButton(
+                            onClick = onClose,
+                        ) {
+                            Text("Done")
+                        }
+                    }
+                }
             }
-        },
-    ) {
-        Icon(
-            painter = painterResource(Res.drawable.content_copy_24px),
-            contentDescription = contentDescription
-        )
+        }
     }
 }
 
+@Composable
+private fun EnterManuallyDialog(
+    state: DialogState,
+    localNodeId: String,
+    onClose: () -> Unit,
+) {
+    Dialog(state = state, onDismiss = onClose) {
+        Scrim()
+        DialogPanel(
+            modifier = Modifier
+                .widthIn(max = 500.dp)
+                .padding(16.dp)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = "Connect manually",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+
+                    Text(
+                        text = "This code can be used to connect manually to this device.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    val split = localNodeId.chunked(32).joinToString("\n")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            8.dp,
+                            Alignment.CenterHorizontally
+                        ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = split, style = MaterialTheme.typography.monospaceMedium)
+
+                        val clipboard = LocalClipboard.current
+
+                        IconButton(
+                            onClick = {
+                                runBlocking {
+                                    val clip = toClipEntry(localNodeId)
+                                    clipboard.setClipEntry(clip)
+                                    // not supported in CMP
+                                    // Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                        ) {
+                            Icon(
+                                painter = painterResource(Res.drawable.content_copy_24px),
+                                contentDescription = "Copy button"
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End),
+                    ) {
+                        TextButton(
+                            onClick = onClose,
+                        ) {
+                            Text("Done")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

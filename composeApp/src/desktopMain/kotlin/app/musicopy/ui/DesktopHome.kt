@@ -45,17 +45,17 @@ fun DesktopHome(
             }
 
             val left = @Composable {
-                ConnectWidget(
-                    model = model,
-                    onAcceptAndTrust = onAcceptAndTrust,
-                    onAcceptOnce = onAcceptOnce,
-                    onDeny = onDeny,
-                )
                 LibraryWidget(
                     model = model,
                     onAddRoot = onAddLibraryRoot,
                     onRemoveRoot = onRemoveLibraryRoot,
                     onRescan = onRescanLibrary,
+                )
+                ConnectWidget(
+                    model = model,
+                    onAcceptAndTrust = onAcceptAndTrust,
+                    onAcceptOnce = onAcceptOnce,
+                    onDeny = onDeny,
                 )
             }
             val right = @Composable {
