@@ -5,6 +5,9 @@ import uniffi.musicopy.ClientModel
 import uniffi.musicopy.CounterModel
 import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
+import uniffi.musicopy.LibraryModel
+import uniffi.musicopy.LibraryRootModel
+import uniffi.musicopy.NodeModel
 import uniffi.musicopy.ServerModel
 import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
@@ -50,7 +53,32 @@ fun mockNodeId(): String {
         .joinToString("")
 }
 
-fun mockServerModel(): ServerModel {
+fun mockNodeModel(
+    nodeId: String = mockNodeId(),
+    homeRelay: String = "https://use1-1.relay.iroh.network./",
+    servers: List<ServerModel> = emptyList(),
+    clients: List<ClientModel> = emptyList(),
+): NodeModel {
+    return NodeModel(
+        nodeId = nodeId,
+        homeRelay = homeRelay,
+        sendIpv4 = 12345u,
+        sendIpv6 = 12345u,
+        sendRelay = 12345u,
+        recvIpv4 = 12345u,
+        recvIpv6 = 12345u,
+        recvRelay = 12345u,
+        connSuccess = 4u,
+        connDirect = 3u,
+        servers = servers,
+        clients = clients,
+        trustedNodes = emptyList()
+    )
+}
+
+fun mockServerModel(
+    transferJobs: List<TransferJobModel> = emptyList(),
+): ServerModel {
     return ServerModel(
         name = "My Phone",
         nodeId = mockNodeId(),
@@ -58,7 +86,7 @@ fun mockServerModel(): ServerModel {
         accepted = true,
         connectionType = "direct",
         latencyMs = 42u,
-        transferJobs = emptyList()
+        transferJobs = transferJobs
     )
 }
 
@@ -248,6 +276,18 @@ fun mockTransferJobProgressModelFailed() = TransferJobProgressModel.Failed(
     error = "something went wrong"
 )
 
+fun mockLibraryModel(
+    localRoots: List<LibraryRootModel> = emptyList(),
+    transcoding: Boolean = false,
+): LibraryModel {
+    return LibraryModel(
+        localRoots = localRoots,
+        transcodeCountQueued = if (transcoding) CounterModel(27u) else CounterModel(0u),
+        transcodeCountInprogress = if (transcoding) CounterModel(8u) else CounterModel(0u),
+        transcodeCountReady = if (transcoding) CounterModel(143u) else CounterModel(0u),
+        transcodeCountFailed = CounterModel(0u)
+    )
+}
 
 internal fun now(): ULong {
     return Clock.System.now().epochSeconds.toULong()
