@@ -67,7 +67,7 @@ val Typography.logotype: TextStyle
             fontFamily = remFontFamily(),
             fontWeight = FontWeight.Bold,
             fontStyle = FontStyle.Normal,
-            fontSize = 20.sp,
+            fontSize = 26.sp,
         )
     }
 

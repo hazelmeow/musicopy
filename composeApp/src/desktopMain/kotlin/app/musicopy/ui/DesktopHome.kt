@@ -5,17 +5,45 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
+import com.composables.core.Dialog
+import com.composables.core.DialogPanel
+import com.composables.core.DialogState
+import com.composables.core.Scrim
+import com.composables.core.rememberDialogState
+import kotlinx.datetime.Instant
+import kotlinx.datetime.format
+import kotlinx.datetime.format.DateTimeComponents
+import kotlinx.datetime.format.MonthNames
+import kotlinx.datetime.format.char
+import musicopy_root.musicopy.BuildConfig
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.info_24px
+import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.Model
 
 @Composable
@@ -31,6 +59,14 @@ fun DesktopHome(
 ) {
     val oneCol = LocalWindowInfo.current.containerSize.width < 600
 
+    val aboutState = rememberDialogState(initiallyVisible = true)
+    AboutDialog(
+        state = aboutState,
+        onClose = {
+            aboutState.visible = false
+        }
+    )
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
@@ -39,10 +75,29 @@ fun DesktopHome(
         Column(
             modifier = Modifier.widthIn(0.dp, 840.dp).padding(32.dp)
         ) {
-            Row {
+            Row(
+                modifier = Modifier.padding(bottom = 4.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
                 Text("MUSICOPY", style = MaterialTheme.typography.logotype)
+
                 Box(modifier = Modifier.weight(1f))
-                Text("?")
+
+                FilledIconButton(
+                    onClick = {
+                        aboutState.visible = true
+                    },
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                ) {
+                    Icon(
+                        painter = painterResource(Res.drawable.info_24px),
+                        contentDescription = "About button icon",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
 
             val left = @Composable {
@@ -92,5 +147,123 @@ fun DesktopHome(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AboutDialog(
+    state: DialogState,
+    onClose: () -> Unit,
+) {
+    Dialog(state = state, onDismiss = onClose) {
+        Scrim()
+        DialogPanel(
+            modifier = Modifier
+                .widthIn(max = 600.dp)
+                .padding(16.dp)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = "About Musicopy",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+
+                    Text(
+                        text = buildAnnotatedString {
+                            withUrl(
+                                "https://musicopy.app/manual",
+                            ) {
+                                append("User Manual")
+                            }
+                            append("  ⋅  ")
+                            withUrl(
+                                "https://github.com/hazelmeow/musicopy",
+                            ) {
+                                append("Source")
+                            }
+                            appendLine()
+
+                            appendLine()
+
+                            val buildTime = Instant.fromEpochMilliseconds(BuildConfig.BUILD_TIME)
+                            val buildDate = buildTime.format(DateTimeComponents.Format {
+                                monthName(MonthNames.ENGLISH_FULL)
+                                char(' ')
+                                dayOfMonth()
+                                chars(", ")
+                                year()
+                            })
+                            appendLine("Version ${BuildConfig.APP_VERSION}, built on $buildDate.")
+
+                            appendLine()
+
+                            append(
+                                "Musicopy is available under the "
+                            )
+                            withUrl(
+                                "https://github.com/hazelmeow/musicopy/blob/main/LICENSE",
+                            ) {
+                                append("GNU AGPL, version 3")
+                            }
+                            appendLine(".")
+
+                            appendLine()
+
+                            append("For more information, visit ")
+                            withUrl("https://musicopy.app") {
+                                append("musicopy.app")
+                            }
+                            appendLine(
+                                "."
+                            )
+
+                            append("For support, email ")
+                            withUrl("mailto:support@musicopy.app") {
+                                append("support@musicopy.app")
+                            }
+                            appendLine(".")
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = onClose,
+                        ) {
+                            Text("Close")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AnnotatedString.Builder.withUrl(
+    url: String,
+    content: AnnotatedString.Builder.() -> Unit,
+) {
+    withLink(
+        LinkAnnotation.Url(
+            url = url,
+            styles = TextLinkStyles(
+                style = SpanStyle(
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline
+                )
+            )
+        )
+    ) {
+        content()
     }
 }

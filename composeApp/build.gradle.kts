@@ -1,10 +1,10 @@
+import gobley.gradle.GobleyHost
+import gobley.gradle.cargo.dsl.jvm
+import gobley.gradle.rust.targets.RustAndroidTarget
+import gobley.gradle.rust.targets.RustTarget
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import gobley.gradle.GobleyHost
-import gobley.gradle.cargo.dsl.*
-import gobley.gradle.rust.targets.RustAndroidTarget
-import gobley.gradle.rust.targets.RustTarget
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -20,6 +20,8 @@ plugins {
     kotlin("plugin.atomicfu") version libs.versions.kotlin
 
     id("dev.hydraulic.conveyor") version "1.12"
+
+    id("com.github.gmazzo.buildconfig") version "5.6.7"
 }
 
 val appVersionCode = System.getenv("APP_VERSION_CODE")?.toInt() ?: 1
@@ -32,6 +34,11 @@ val desktopVersionName = appVersion
 
 val macosVersionShort = "1.0"
 val macosVersionBuild = "1.0"
+
+buildConfig {
+    buildConfigField("APP_VERSION", appVersion)
+    buildConfigField("BUILD_TIME", System.currentTimeMillis())
+}
 
 kotlin {
     androidTarget {
