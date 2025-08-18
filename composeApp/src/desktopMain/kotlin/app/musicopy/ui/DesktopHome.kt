@@ -59,7 +59,7 @@ fun DesktopHome(
 ) {
     val oneCol = LocalWindowInfo.current.containerSize.width < 600
 
-    val aboutState = rememberDialogState(initiallyVisible = true)
+    val aboutState = rememberDialogState(initiallyVisible = false)
     AboutDialog(
         state = aboutState,
         onClose = {
