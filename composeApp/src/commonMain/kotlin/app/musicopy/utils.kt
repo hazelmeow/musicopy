@@ -1,5 +1,12 @@
 package app.musicopy
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.datetime.Clock
 import uniffi.musicopy.ClientModel
 import uniffi.musicopy.CounterModel
@@ -12,9 +19,35 @@ import uniffi.musicopy.ServerModel
 import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
 
+@Composable
+fun <T> rememberPoll(
+    intervalMs: Long = 100,
+    callback: () -> T
+): State<T> {
+    val state = remember { mutableStateOf(callback()) }
+    LaunchedEffect(callback) {
+        while (isActive) {
+            state.value = (callback())
+            delay(intervalMs)
+        }
+    }
+    return state
+}
+
 fun shortenNodeId(nodeId: String): String {
     return "${nodeId.slice(0..<6)}...${nodeId.slice((nodeId.length - 6)..<(nodeId.length))}"
 }
+
+fun formatSize(
+    fileSizeModel: FileSizeModel,
+    decimals: Int = 1,
+): String = formatSize(
+    when (fileSizeModel) {
+        is FileSizeModel.Actual -> fileSizeModel.v1
+        is FileSizeModel.Estimated -> fileSizeModel.v1
+        FileSizeModel.Unknown -> 0uL
+    }, estimated = fileSizeModel is FileSizeModel.Estimated, decimals = decimals
+)
 
 fun formatSize(
     size: ULong,
@@ -282,6 +315,8 @@ fun mockLibraryModel(
 ): LibraryModel {
     return LibraryModel(
         localRoots = localRoots,
+        transcodesDir = "~/.cache/musicopy/transcodes",
+        transcodesDirSize = FileSizeModel.Actual(1_234_000_000u),
         transcodeCountQueued = if (transcoding) CounterModel(27u) else CounterModel(0u),
         transcodeCountInprogress = if (transcoding) CounterModel(8u) else CounterModel(0u),
         transcodeCountReady = if (transcoding) CounterModel(143u) else CounterModel(0u),

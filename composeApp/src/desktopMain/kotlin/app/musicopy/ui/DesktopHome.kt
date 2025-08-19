@@ -73,7 +73,7 @@ fun DesktopHome(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(
-            modifier = Modifier.widthIn(0.dp, 840.dp).padding(32.dp)
+            modifier = Modifier.widthIn(0.dp, 800.dp).padding(32.dp)
         ) {
             Row(
                 modifier = Modifier.padding(bottom = 4.dp),
@@ -116,6 +116,9 @@ fun DesktopHome(
                 )
             }
             val right = @Composable {
+                SettingsWidget(
+                    model = model,
+                )
                 JobsWidget(
                     model = model,
                 )
