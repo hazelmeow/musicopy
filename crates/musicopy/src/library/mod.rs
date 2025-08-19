@@ -4,6 +4,7 @@ use crate::{
     database::{Database, InsertFile},
     library::transcode::{TranscodeCommand, TranscodeItem, TranscodePool, TranscodeStatusCache},
     model::CounterModel,
+    node::FileSizeModel,
 };
 use anyhow::Context;
 use iroh::NodeId;
@@ -32,6 +33,9 @@ pub struct LibraryRootModel {
 #[derive(Debug, uniffi::Record)]
 pub struct LibraryModel {
     pub local_roots: Vec<LibraryRootModel>,
+
+    pub transcodes_dir: String,
+    pub transcodes_dir_size: FileSizeModel,
 
     pub transcode_count_queued: Arc<CounterModel>,
     pub transcode_count_inprogress: Arc<CounterModel>,
@@ -63,11 +67,12 @@ impl Library {
         transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<Arc<Self>> {
         // spawn transcode pool task
-        let transcode_pool = TranscodePool::spawn(transcodes_dir, transcode_status_cache);
+        let transcode_pool = TranscodePool::spawn(transcodes_dir.clone(), transcode_status_cache);
 
         let library = Arc::new(Self {
             db,
             local_node_id,
+
             transcode_pool,
         });
 
@@ -364,6 +369,9 @@ impl Library {
 
         LibraryModel {
             local_roots,
+
+            transcodes_dir: self.transcode_pool.transcodes_dir(),
+            transcodes_dir_size: self.transcode_pool.transcodes_dir_size(),
 
             transcode_count_queued: Arc::new(self.transcode_pool.queued_count_model()),
             transcode_count_inprogress: Arc::new(self.transcode_pool.inprogress_count_model()),

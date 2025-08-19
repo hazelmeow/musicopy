@@ -1,4 +1,4 @@
-use crate::model::CounterModel;
+use crate::{model::CounterModel, node::FileSizeModel};
 use anyhow::Context;
 use dashmap::DashMap;
 use rayon::prelude::*;
@@ -286,7 +286,9 @@ pub enum TranscodeCommand {
 
 /// A handle to a pool of worker threads for transcoding files.
 pub struct TranscodePool {
+    transcodes_dir: PathBuf,
     status_cache: TranscodeStatusCache,
+
     inprogress_counter: RegionCounter,
 
     command_tx: mpsc::UnboundedSender<TranscodeCommand>,
@@ -305,6 +307,7 @@ impl TranscodePool {
         let inprogress_counter = RegionCounter::new();
 
         tokio::spawn({
+            let transcodes_dir = transcodes_dir.clone();
             let status_cache = status_cache.clone();
             let inprogress_counter = inprogress_counter.clone();
             async move {
@@ -317,7 +320,9 @@ impl TranscodePool {
         });
 
         TranscodePool {
+            transcodes_dir,
             status_cache,
+
             inprogress_counter,
 
             command_tx,
@@ -535,6 +540,29 @@ impl TranscodePool {
         self.command_tx
             .send(command)
             .map_err(|e| anyhow::anyhow!("failed to send TranscodeCommand: {e:#}"))
+    }
+
+    pub fn transcodes_dir(&self) -> String {
+        self.transcodes_dir.to_string_lossy().to_string()
+    }
+
+    pub fn transcodes_dir_size(&self) -> FileSizeModel {
+        let (size, estimated) = self.status_cache.cache.iter().fold(
+            (0, false),
+            |(acc_size, acc_estimated), e| match &*e {
+                TranscodeStatus::Queued { estimated_size } => {
+                    (acc_size + estimated_size.unwrap_or(0), true)
+                }
+                TranscodeStatus::Ready { file_size, .. } => (acc_size + file_size, acc_estimated),
+                TranscodeStatus::Failed { .. } => (acc_size, acc_estimated),
+            },
+        );
+
+        if estimated {
+            FileSizeModel::Estimated(size)
+        } else {
+            FileSizeModel::Actual(size)
+        }
     }
 
     pub fn queued_count_model(&self) -> CounterModel {
