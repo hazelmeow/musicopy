@@ -27,8 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.musicopy.openDirectoryInExplorer
 import app.musicopy.ui.components.Info
 import app.musicopy.ui.components.WidgetContainer
 import com.composables.core.Dialog
@@ -192,19 +194,24 @@ private fun LibraryRoot(root: LibraryRootModel, onStartRemoveRoot: (String) -> U
             modifier = Modifier.padding(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.padding(start = 8.dp)) {
+            Column(modifier = Modifier.padding(start = 8.dp).weight(1f)) {
                 Text(
                     "${root.name} (${root.numFiles})",
-                    style = MaterialTheme.typography.labelLarge
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Text("${root.path}", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "${root.path}",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-
-            Box(modifier = Modifier.weight(1f))
 
             IconButton(
                 onClick = {
-                    // TODO
+                    openDirectoryInExplorer(root.path)
                 },
             ) {
                 Icon(
