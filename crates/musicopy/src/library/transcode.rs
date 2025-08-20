@@ -1,6 +1,8 @@
 use crate::{model::CounterModel, node::FileSizeModel};
 use anyhow::Context;
+use base64::{Engine, prelude::BASE64_STANDARD};
 use dashmap::DashMap;
+use image::{ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType};
 use rayon::prelude::*;
 use rubato::{FftFixedIn, Resampler};
 use std::{
@@ -8,7 +10,7 @@ use std::{
     collections::{HashSet, VecDeque},
     fs::File,
     hash::{Hash, Hasher},
-    io::{Seek, SeekFrom},
+    io::{Cursor, Seek, SeekFrom},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -19,7 +21,7 @@ use std::{
 use symphonia::core::{
     formats::{TrackType, probe::Hint},
     io::MediaSourceStream,
-    meta::StandardTag,
+    meta::{StandardTag, StandardVisualKey},
 };
 use tokio::sync::mpsc;
 
@@ -993,6 +995,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
 
         if let Some(metadata) = format.metadata().skip_to_latest() {
             for tag in metadata.tags().iter().flat_map(|t| &t.std) {
+                // TODO: replace =
                 let comment = match tag {
                     StandardTag::TrackTitle(tag) => Some(format!("TITLE={tag}")),
                     StandardTag::Album(tag) => Some(format!("ALBUM={tag}")),
@@ -1006,6 +1009,69 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
                     buf.extend((s.len() as u32).to_le_bytes());
                     buf.extend(s.bytes());
                 }
+            }
+
+            // find front cover visual or first available
+            let mut best_visual = metadata.visuals().first();
+            for visual in metadata.visuals() {
+                if visual.usage == Some(StandardVisualKey::FrontCover) {
+                    best_visual = Some(visual);
+                }
+            }
+
+            if let Some(visual) = best_visual {
+                let rdr = ImageReader::new(Cursor::new(&visual.data))
+                    .with_guessed_format()
+                    .expect("cursor io never fails");
+
+                // convert to jpeg 500x500 90% quality
+                let image_buf = {
+                    let original_image = rdr.decode().context("failed to decode image")?;
+
+                    let resized_image = original_image.resize(500, 500, FilterType::Lanczos3);
+
+                    let mut image_buf = vec![];
+                    let mut encoder = JpegEncoder::new_with_quality(&mut image_buf, 90);
+                    encoder
+                        .encode_image(&resized_image)
+                        .context("failed to encode image")?;
+
+                    image_buf
+                };
+
+                // construct flac picture structure
+                // note that flac uses big endian while vorbis comments use little endian
+                let mut picture = Vec::<u8>::new();
+                picture.extend(&3u32.to_be_bytes()); // picture type (3, front cover)
+
+                let media_type = "image/jpeg";
+                picture.extend(&(media_type.len() as u32).to_be_bytes());
+                picture.extend(media_type.as_bytes());
+
+                picture.extend(&[0, 0, 0, 0]); // description length
+                picture.extend(&500u32.to_be_bytes()); // width (500px)
+                picture.extend(&500u32.to_be_bytes()); // height (500px)
+                picture.extend(&[0, 0, 0, 0]); // color depth (0, unknown)
+                picture.extend(&[0, 0, 0, 0]); // indexed color count (0, non-indexed)
+
+                picture.extend(&(image_buf.len() as u32).to_be_bytes()); // picture data length
+                picture.extend(&image_buf); // picture data
+
+                // encode picture with base64 for comment
+                let comment = format!(
+                    "METADATA_BLOCK_PICTURE={}",
+                    BASE64_STANDARD.encode(&picture)
+                );
+
+                log::debug!(
+                    "adding visual to opus tags, image size = {}, comment size = {}",
+                    image_buf.len(),
+                    comment.len(),
+                );
+
+                len += 1;
+                buf.extend((comment.len() as u32).to_le_bytes());
+                buf.extend(comment.as_bytes());
             }
         }
 
@@ -1212,6 +1278,9 @@ fn estimate_file_size(path: &PathBuf) -> anyhow::Result<u64> {
 
     // estimated size = duration * bitrate (128k), converted to bytes
     let estimated_size = duration_secs * 128_000.0 / 8.0;
+
+    // add 150 KB for embedded cover art
+    let estimated_size = estimated_size + 150_000.0;
 
     // add 1% for container overhead
     let estimated_size = estimated_size * 1.01;
