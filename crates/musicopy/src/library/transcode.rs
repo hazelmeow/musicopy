@@ -19,6 +19,7 @@ use std::{
 use symphonia::core::{
     formats::{TrackType, probe::Hint},
     io::MediaSourceStream,
+    meta::StandardTag,
 };
 use tokio::sync::mpsc;
 
@@ -976,7 +977,7 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
     let rate_bytes = 48000u32.to_le_bytes();
 
     #[rustfmt::skip]
-	let opus_header: [u8; 19] = [
+	let opus_head: [u8; 19] = [
         b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', // magic signature
         1, // version, always 1
         channel_count as u8, // channel count
@@ -986,23 +987,52 @@ fn transcode(input_path: &Path, output_path: &Path) -> anyhow::Result<u64> {
         0, // channel mapping family
     ];
 
+    let (user_comments_len, user_comments_buf) = {
+        let mut len = 0u32;
+        let mut buf = Vec::new();
+
+        if let Some(metadata) = format.metadata().skip_to_latest() {
+            for tag in metadata.tags().iter().flat_map(|t| &t.std) {
+                let comment = match tag {
+                    StandardTag::TrackTitle(tag) => Some(format!("TITLE={tag}")),
+                    StandardTag::Album(tag) => Some(format!("ALBUM={tag}")),
+                    StandardTag::TrackNumber(tag) => Some(format!("TRACKNUMBER={tag}")),
+                    StandardTag::Artist(tag) => Some(format!("ARTIST={tag}")),
+                    _ => None,
+                };
+
+                if let Some(s) = comment {
+                    len += 1;
+                    buf.extend((s.len() as u32).to_le_bytes());
+                    buf.extend(s.bytes());
+                }
+            }
+        }
+
+        (len, buf)
+    };
+
     #[rustfmt::skip]
-    let comment_header: [u8; 24] = [
-        b'O', b'p', b'u', b's', b'T', b'a', b'g', b's', // magic signature
-        0x08, 0x00, 0x00, 0x00, // vendor string length (8u32 in little-endian)
-        b'm', b'u', b's', b'i', b'c', b'o', b'p', b'y', // vendor string
-        0x00, 0x00, 0x00, 0x00, // no user comments (0u32)
-    ];
+    let opus_tags = {
+        let mut buf = vec![
+            b'O', b'p', b'u', b's', b'T', b'a', b'g', b's', // magic signature
+            0x08, 0x00, 0x00, 0x00, // vendor string length (8u32 in little-endian)
+            b'm', b'u', b's', b'i', b'c', b'o', b'p', b'y', // vendor string
+        ];
+        buf.extend(user_comments_len.to_le_bytes());
+        buf.extend(user_comments_buf);
+        buf
+    };
 
     // stream unique serial identifier
     let serial = 0;
 
-    // write opus header and comment header packets
+    // write opus head and opus tags packets
     packet_writer
-        .write_packet(&opus_header, serial, ogg::PacketWriteEndInfo::EndPage, 0)
+        .write_packet(&opus_head, serial, ogg::PacketWriteEndInfo::EndPage, 0)
         .context("failed to write packet")?;
     packet_writer
-        .write_packet(&comment_header, serial, ogg::PacketWriteEndInfo::EndPage, 0)
+        .write_packet(&opus_tags, serial, ogg::PacketWriteEndInfo::EndPage, 0)
         .context("failed to write packet")?;
 
     // number of frames per chunk (48khz / 1000 * 20ms = 960 frames)
