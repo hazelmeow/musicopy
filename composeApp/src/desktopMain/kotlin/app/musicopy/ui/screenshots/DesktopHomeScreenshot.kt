@@ -21,7 +21,7 @@ fun DesktopHomeScreenshot() {
             servers = listOf(
                 mockServerModel(
                     transferJobs = buildList {
-                        repeat(12) {
+                        repeat(7) {
                             add(mockTransferJobModel(progress = mockTransferJobProgressModelTranscoding()))
                             add(mockTransferJobModel(progress = mockTransferJobProgressModelReady()))
                             add(mockTransferJobModel(progress = mockTransferJobProgressModelInProgress()))

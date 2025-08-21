@@ -30,6 +30,7 @@ import com.composeunstyled.Text
 import app.musicopy.ui.screens.PreTransferScreenSandbox
 import app.musicopy.ui.screens.TransferScreenSandbox
 import app.musicopy.ui.screenshots.DesktopHomeScreenshot
+import app.musicopy.ui.screenshots.MobileTransferScreenshot
 import io.github.alexzhirkevich.qrose.toByteArray
 import kotlinx.coroutines.launch
 import java.io.File
@@ -66,11 +67,17 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
+    val isMobile = true
+
+    val width = if (isMobile) 350 else WINDOW_WIDTH
+    val height = WINDOW_HEIGHT
+
     Screenshot(
-        width = WINDOW_WIDTH,
-        height = WINDOW_HEIGHT,
+        width = width,
+        height = height,
     ) {
-        DesktopHomeScreenshot()
+//        DesktopHomeScreenshot()
+        MobileTransferScreenshot()
     }
 }
 

@@ -22,7 +22,7 @@ import uniffi.musicopy.TransferJobProgressModel
 @Composable
 fun <T> rememberPoll(
     intervalMs: Long = 100,
-    callback: () -> T
+    callback: () -> T,
 ): State<T> {
     val state = remember { mutableStateOf(callback()) }
     LaunchedEffect(callback) {
@@ -123,7 +123,18 @@ fun mockServerModel(
     )
 }
 
-fun mockClientModel(): ClientModel {
+fun mockClientModel(
+    transferJobs: List<TransferJobModel> = buildList {
+        repeat(100) {
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelRequested()))
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelTranscoding()))
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelReady()))
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelInProgress()))
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
+            add(mockTransferJobModel(progress = mockTransferJobProgressModelFailed()))
+        }
+    },
+): ClientModel {
     val nodeId = mockNodeId()
 
     return ClientModel(
@@ -231,16 +242,7 @@ fun mockClientModel(): ClientModel {
             mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j"),
             mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j/k"),
         ),
-        transferJobs = buildList {
-            repeat(100) {
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelRequested()))
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelTranscoding()))
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelReady()))
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelInProgress()))
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                add(mockTransferJobModel(progress = mockTransferJobProgressModelFailed()))
-            }
-        }
+        transferJobs = transferJobs
     )
 }
 
@@ -279,13 +281,16 @@ fun mockIndexItemModel(
 var nextMockJobId: ULong = 0u
 
 fun mockTransferJobModel(
+    fileRoot: String = "root",
+    filePath: String = "a/b/c.mp3",
+    fileSize: ULong = 12345678u,
     progress: TransferJobProgressModel = mockTransferJobProgressModelInProgress(),
 ): TransferJobModel {
     return TransferJobModel(
         jobId = nextMockJobId++,
-        fileRoot = "root",
-        filePath = "a/b/c.mp3",
-        fileSize = 12345678u,
+        fileRoot = fileRoot,
+        filePath = filePath,
+        fileSize = fileSize,
         progress = progress
     )
 }
@@ -296,9 +301,11 @@ fun mockTransferJobProgressModelTranscoding() = TransferJobProgressModel.Transco
 
 fun mockTransferJobProgressModelReady() = TransferJobProgressModel.Ready
 
-fun mockTransferJobProgressModelInProgress() = TransferJobProgressModel.InProgress(
+fun mockTransferJobProgressModelInProgress(
+    bytes: ULong = 2345678u,
+) = TransferJobProgressModel.InProgress(
     startedAt = now() - 5u,
-    bytes = CounterModel(2345678u)
+    bytes = CounterModel(bytes)
 )
 
 fun mockTransferJobProgressModelFinished() = TransferJobProgressModel.Finished(
@@ -316,7 +323,7 @@ fun mockLibraryModel(
     return LibraryModel(
         localRoots = localRoots,
         transcodesDir = "~/.cache/musicopy/transcodes",
-        transcodesDirSize = FileSizeModel.Actual(1_234_000_000u),
+        transcodesDirSize = FileSizeModel.Actual(534_000_000u),
         transcodeCountQueued = if (transcoding) CounterModel(27u) else CounterModel(0u),
         transcodeCountInprogress = if (transcoding) CounterModel(8u) else CounterModel(0u),
         transcodeCountReady = if (transcoding) CounterModel(143u) else CounterModel(0u),
