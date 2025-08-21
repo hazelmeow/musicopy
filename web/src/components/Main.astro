@@ -1,0 +1,16 @@
+<main class="container">
+  <slot />
+</main>
+
+<style>
+  .container {
+    width: 800px;
+    padding: 0 20px;
+  }
+
+  @media screen and (max-width: 840px) {
+    .container {
+      width: calc(100% - 40px);
+    }
+  }
+</style>

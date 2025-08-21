@@ -1,0 +1,166 @@
+---
+import FilledButtonLink from "./FilledButtonLink.astro";
+import TextButtonLink from "./TextButtonLink.astro";
+
+interface Props {
+  logotypeElement?: "h1" | "h2";
+}
+const { logotypeElement } = Astro.props;
+---
+
+<nav>
+  <div class="nav-desktop">
+    {
+      logotypeElement === "h1" ? (
+        <h1 class="logotype">
+          <a href="/">MUSICOPY</a>
+        </h1>
+      ) : (
+        <h2 class="logotype">
+          <a href="/">MUSICOPY</a>
+        </h2>
+      )
+    }
+
+    <div class="flex-1"></div>
+
+    <TextButtonLink href="/manual">Manual</TextButtonLink>
+    <TextButtonLink href="/pricing">Pricing</TextButtonLink>
+    <FilledButtonLink href="/download">Download</FilledButtonLink>
+  </div>
+
+  <div class="nav-mobile">
+    <input
+      class="nav-toggle"
+      type="checkbox"
+      id="nav-toggle"
+      name="nav-toggle"
+    />
+
+    <div class="nav-mobile-row">
+      {
+        logotypeElement === "h1" ? (
+          <h1 class="logotype">
+            <a href="/">MUSICOPY</a>
+          </h1>
+        ) : (
+          <h2 class="logotype">
+            <a href="/">MUSICOPY</a>
+          </h2>
+        )
+      }
+
+      <label for="nav-toggle">
+        <span class="material-symbols-outlined nav-mobile-icon-unchecked">
+          menu
+        </span>
+        <span class="material-symbols-outlined nav-mobile-icon-checked">
+          close
+        </span>
+      </label>
+    </div>
+
+    <div class="nav-hamburger">
+      <a href="/manual">Manual</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<style>
+  nav {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    margin: 0 20px;
+  }
+
+  .logotype {
+    font-family: REM, sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 700;
+    margin: 20px 0;
+    font-size: 32px;
+  }
+
+  .logotype a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+
+  .nav-desktop {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    width: 800px;
+    margin: 0 20px;
+  }
+
+  .nav-mobile {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    /* transition: background-color 0.1s; */
+  }
+
+  .nav-mobile:has(#nav-toggle:checked) {
+    background-color: var(--color-tertiary-container);
+    margin-bottom: 25px;
+  }
+
+  .nav-mobile .logotype {
+    width: 100%;
+  }
+
+  .nav-mobile-row {
+    margin: 0 20px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  #nav-toggle {
+    display: none;
+  }
+
+  .nav-mobile-icon-checked {
+    display: none;
+  }
+  #nav-toggle:checked ~ .nav-mobile-row .nav-mobile-icon-unchecked {
+    display: none;
+  }
+  #nav-toggle:checked ~ .nav-mobile-row .nav-mobile-icon-checked {
+    display: block;
+  }
+
+  .nav-hamburger {
+    display: none;
+    flex-direction: column;
+    margin: 0px 20px 10px;
+  }
+  .nav-hamburger a {
+    height: 50px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    text-decoration: none;
+    color: black;
+  }
+
+  #nav-toggle:checked ~ .nav-hamburger {
+    display: flex;
+  }
+
+  @media screen and (max-width: 800px) {
+    .nav-desktop {
+      display: none;
+    }
+    .nav-mobile {
+      display: flex;
+    }
+  }
+</style>

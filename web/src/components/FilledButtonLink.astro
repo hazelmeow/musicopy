@@ -1,0 +1,61 @@
+---
+interface Props {
+  href: string;
+  size?: "md" | "lg";
+  outlined?: boolean;
+}
+const { href, size, outlined } = Astro.props;
+---
+
+<a
+  href={href}
+  class:list={["filledbutton", size === "lg" && "lg", outlined && "outlined"]}
+>
+  <slot />
+</a>
+
+<style>
+  .filledbutton {
+    display: block;
+    padding: 10px 16px;
+    border-radius: 1000px;
+    background-color: var(--color-primary-container);
+    color: var(--color-on-primary-container);
+    text-decoration: none;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .filledbutton::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--color-on-primary-container);
+    opacity: 0;
+    transition: opacity 0.1s ease-in-out;
+    pointer-events: none;
+  }
+
+  .filledbutton:hover::before {
+    opacity: 0.08;
+  }
+
+  .filledbutton:active::before {
+    opacity: 0.18;
+  }
+
+  .filledbutton:focus-visible::before {
+    opacity: 0.1;
+  }
+
+  .filledbutton.lg {
+    padding: 20px 32px;
+  }
+
+  .filledbutton.outlined {
+    border: 1px solid var(--color-outline-variant);
+  }
+</style>

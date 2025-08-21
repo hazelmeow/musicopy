@@ -1,0 +1,101 @@
+---
+import BaseLayout from "../components/BaseLayout.astro";
+import FilledButtonLink from "../components/FilledButtonLink.astro";
+import Footer from "../components/Footer.astro";
+import Main from "../components/Main.astro";
+import Nav from "../components/Nav.astro";
+---
+
+<BaseLayout title="Musicopy">
+  <Nav logotypeElement="h1" />
+
+  <Main>
+    <div class="hero">
+      <div class="hero-desktop">
+        <img src="/hero_desktop.png" />
+      </div>
+      <div class="hero-mobile">
+        <img src="/hero_mobile.png" />
+      </div>
+    </div>
+
+    <div class="tagline">
+      <h2>Transfer your music to your phone, without the hassle.</h2>
+      <div class="cta">
+        <FilledButtonLink href="/download" size="lg"
+          >Download Musicopy</FilledButtonLink
+        >
+      </div>
+    </div>
+
+    <h2>Features</h2>
+    <div>
+      <div>
+        <h3>Magic connectivity</h3>
+        <span>
+          Scan a QR code to connect. Don't bother with cables, local IP
+          addresses, or cloud services.
+        </span>
+      </div>
+
+      <div>
+        <h3>Transcoding</h3>
+        <span>
+          Configure perceptually-lossless compression to fit more songs on your
+          device.
+        </span>
+      </div>
+
+      <div>
+        <h3>No nonsense</h3>
+        <span>
+          No accounts, servers, ads, or subscriptions. Just download both apps
+          to get started.
+        </span>
+      </div>
+    </div>
+  </Main>
+
+  <div class="flex-1"></div>
+
+  <Footer />
+
+  <style>
+    .hero {
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      gap: calc(min(800px, 100vw - 40px) * 0.05);
+    }
+
+    .hero-desktop {
+      /* width: calc(min(800px, 100vw - 40px) * 0.7); */
+      background-color: var(--color-secondary-container);
+      border: 1px solid var(--color-outline-variant);
+    }
+    .hero-mobile {
+      /* width: calc(min(800px, 100vw - 40px) * 0.25); */
+      background-color: var(--color-secondary-container);
+      border: 1px solid var(--color-outline-variant);
+    }
+
+    .hero img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    .tagline {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      margin: 20px 0;
+    }
+
+    .tagline h2 {
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</BaseLayout>

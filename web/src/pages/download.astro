@@ -1,0 +1,103 @@
+---
+import BaseLayout from "../components/BaseLayout.astro";
+import FilledButtonLink from "../components/FilledButtonLink.astro";
+import Footer from "../components/Footer.astro";
+import Main from "../components/Main.astro";
+import Nav from "../components/Nav.astro";
+---
+
+<BaseLayout title="Musicopy | Download">
+  <Nav />
+
+  <Main>
+    <h1>Download</h1>
+
+    <div class="platforms">
+      <div class="platform desktop">
+        <h2>Desktop</h2>
+
+        <FilledButtonLink
+          href="https://download.musicopy.app/download.html"
+          size="lg"
+          outlined
+        >
+          <div class="row">
+            Download
+
+            <span class="material-symbols-outlined"> arrow_forward </span>
+          </div>
+        </FilledButtonLink>
+
+        <span class="label">Available for Windows, MacOS, and Linux.</span>
+      </div>
+
+      <div class="platform mobile">
+        <h2>Mobile</h2>
+
+        <div class="center">
+          <span class="label">Not available yet.</span>
+        </div>
+      </div>
+    </div>
+  </Main>
+
+  <div class="flex-1"></div>
+
+  <Footer />
+</BaseLayout>
+
+<style>
+  .platforms {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    width: 100%;
+  }
+
+  .platform {
+    flex: 1;
+    padding: 20px;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-surface-container-highest);
+  }
+
+  .platform.desktop {
+    gap: 20px;
+  }
+
+  .platform h2 {
+    margin: 0;
+  }
+
+  .row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .label {
+    font-size: 12pt;
+    line-height: 16px;
+  }
+
+  .center {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+  }
+
+  @media screen and (max-width: 800px) {
+    .platforms {
+      flex-direction: column-reverse;
+    }
+
+    .center {
+      margin-top: 20px;
+    }
+  }
+</style>

@@ -1,0 +1,38 @@
+---
+import BaseLayout from "../components/BaseLayout.astro";
+import Footer from "../components/Footer.astro";
+import Main from "../components/Main.astro";
+import Nav from "../components/Nav.astro";
+---
+
+<BaseLayout title="Musicopy | Pricing">
+  <Nav />
+
+  <Main>
+    <h1>Pricing</h1>
+
+    <p>
+      The plan is to release Musicopy with a reasonably-priced lifetime license
+      and an unlimited free trial. This is intended to support the development
+      of Musicopy long-term. The license will not grant any additional features
+      or change the software besides removing the license purchase prompt.
+    </p>
+
+    <h2>Open Source</h2>
+
+    <p>
+      Musicopy is <a href="https://www.gnu.org/philosophy/free-sw.en.html"
+        >free software</a
+      >, available under the <a
+        href="https://github.com/hazelmeow/musicopy/blob/main/LICENSE"
+        >GNU AGPL, version 3</a
+      >. The source is available on <a
+        href="https://github.com/hazelmeow/musicopy">GitHub</a
+      >.
+    </p>
+  </Main>
+
+  <div class="flex-1"></div>
+
+  <Footer />
+</BaseLayout>
