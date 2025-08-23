@@ -144,6 +144,14 @@ impl<'a> App<'a> {
             .collect::<Vec<_>>()
             .join(", ");
 
+        let recent_servers = model
+            .node
+            .recent_servers
+            .iter()
+            .map(|n| format!("{} ({})", shorten_id(&n.node_id), n.connected_at))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         let active_servers = model
             .node
             .servers
@@ -190,6 +198,7 @@ impl<'a> App<'a> {
             ]),
             Line::from(""),
             Line::from(vec!["Trusted Nodes: ".into(), trusted_nodes.yellow()]),
+            Line::from(vec!["Recent Servers: ".into(), recent_servers.yellow()]),
             Line::from(""),
             Line::from(vec!["Pending Servers: ".into(), pending_servers.yellow()]),
             Line::from(vec!["Active Servers: ".into(), active_servers.yellow()]),

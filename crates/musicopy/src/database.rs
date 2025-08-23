@@ -28,6 +28,11 @@ pub struct InsertFile<'a> {
     pub local_path: &'a str,
 }
 
+pub struct RecentServer {
+    pub node_id: NodeId,
+    pub connected_at: u64,
+}
+
 #[derive(Debug)]
 pub struct Database {
     conn: rusqlite::Connection,
@@ -83,6 +88,14 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS trusted_nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 node_id TEXT NOT NULL UNIQUE
+            )",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS recent_servers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL UNIQUE,
+                connected_at INTEGER NOT NULL
             )",
             [],
         )?;
@@ -342,6 +355,37 @@ impl Database {
         self.conn
             .execute("DELETE FROM trusted_nodes WHERE node_id = ?", [&node_id])?;
         Ok(())
+    }
+
+    pub fn update_recent_server(&self, node_id: NodeId, connected_at: u64) -> anyhow::Result<()> {
+        let node_id = node_id_to_string(&node_id);
+        self.conn.execute(
+            "INSERT INTO recent_servers (node_id, connected_at) VALUES (?, ?)
+            ON CONFLICT(node_id) DO UPDATE SET connected_at = excluded.connected_at",
+            [&node_id, &connected_at.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_recent_servers(&self) -> anyhow::Result<Vec<RecentServer>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT node_id, connected_at FROM recent_servers ORDER BY connected_at DESC")
+            .expect("should prepare statement");
+
+        stmt.query_and_then([], |row| {
+            let node_id =
+                hex::decode(row.get::<_, String>(0)?).context("failed to parse node id")?;
+            let node_id =
+                NodeId::try_from(node_id.as_slice()).context("failed to parse node id")?;
+            let connected_at = row.get::<_, u64>(1)?;
+            Ok(RecentServer {
+                node_id,
+                connected_at,
+            })
+        })
+        .expect("should bind parameters")
+        .collect()
     }
 }
 

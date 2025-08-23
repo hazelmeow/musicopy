@@ -124,6 +124,13 @@ pub struct ClientModel {
     pub transfer_jobs: Vec<TransferJobModel>,
 }
 
+/// Model of a recently connected server.
+#[derive(Debug, uniffi::Record)]
+pub struct RecentServerModel {
+    pub node_id: String,
+    pub connected_at: u64,
+}
+
 /// Node state sent to Compose.
 #[derive(Debug, uniffi::Record)]
 pub struct NodeModel {
@@ -143,6 +150,7 @@ pub struct NodeModel {
     pub clients: Vec<ClientModel>,
 
     pub trusted_nodes: Vec<String>,
+    pub recent_servers: Vec<RecentServerModel>,
 }
 
 /// Model of an item selected to be downloaded.
@@ -439,11 +447,12 @@ impl Node {
         let node_id = connection.remote_node_id()?;
         log::info!("opened connection to {node_id}");
 
+        let db = self.db.clone();
         let client_handle_tx = self.client_handle_tx.clone();
         let node = self.clone();
         let download_directory = self.download_directory.clone();
         tokio::spawn(async move {
-            let client = Client::new(client_handle_tx, connection, download_directory);
+            let client = Client::new(db, client_handle_tx, connection, download_directory);
 
             if let Err(e) = client.run().await {
                 log::error!("error during client.run(): {e:#}");
@@ -692,6 +701,23 @@ impl Node {
                 .collect()
         };
 
+        let recent_servers = {
+            let db = self.db.lock().unwrap();
+            match db.get_recent_servers() {
+                Ok(recent_servers) => recent_servers
+                    .into_iter()
+                    .map(|node| RecentServerModel {
+                        node_id: node.node_id.to_string(),
+                        connected_at: node.connected_at,
+                    })
+                    .collect(),
+                Err(e) => {
+                    log::error!("failed to get recent servers from database: {e:#}");
+                    Vec::new()
+                }
+            }
+        };
+
         NodeModel {
             node_id: self.router.endpoint().node_id().to_string(),
             home_relay,
@@ -709,6 +735,7 @@ impl Node {
             clients,
 
             trusted_nodes,
+            recent_servers,
         }
     }
 }
@@ -1568,6 +1595,8 @@ struct ClientHandle {
 }
 
 struct Client {
+    db: Arc<Mutex<Database>>,
+
     handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
     connection: Connection,
 
@@ -1583,6 +1612,7 @@ struct Client {
 
 impl Client {
     fn new(
+        db: Arc<Mutex<Database>>,
         handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
         connection: Connection,
         download_directory: Arc<Mutex<Option<String>>>,
@@ -1744,6 +1774,8 @@ impl Client {
         });
 
         Self {
+            db,
+
             handle_tx,
             connection,
 
@@ -1872,6 +1904,13 @@ impl Client {
 
         // mark as accepted
         self.accepted.store(true, Ordering::Relaxed);
+
+        // update recent servers in database
+        {
+            let db = self.db.lock().unwrap();
+            db.update_recent_server(remote_node_id, self.connected_at)
+                .context("failed to update recent server in database")?;
+        }
 
         // main loop
         loop {
