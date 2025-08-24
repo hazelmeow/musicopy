@@ -31,6 +31,7 @@ import app.musicopy.ui.screens.HomeScreenSandbox
 import com.composeunstyled.Text
 import app.musicopy.ui.screens.PreTransferScreenSandbox
 import app.musicopy.ui.screens.TransferScreenSandbox
+import app.musicopy.ui.screens.WaitingScreenSandbox
 import app.musicopy.ui.screenshots.DesktopHomeScreenshot
 import app.musicopy.ui.screenshots.MobileTransferScreenshot
 import io.github.alexzhirkevich.qrose.toByteArray
@@ -69,7 +70,7 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
-    DisconnectedScreenSandbox()
+    WaitingScreenSandbox()
 }
 
 @Composable
