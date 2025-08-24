@@ -120,10 +120,11 @@ fun App(
         ) {
             composable<Home> {
                 // TODO: make this better...
-                model?.let {
+                model?.let { model ->
                     HomeScreen(
                         onShowNodeStatus = onShowNodeStatus,
 
+                        recentServers = model.node.recentServers,
                         onPickDownloadDirectory = {
                             scope.launch {
                                 directoryPicker.pickDownloadDirectory()
@@ -134,7 +135,8 @@ fun App(
                             navController.navigate(
                                 ConnectManually
                             )
-                        }
+                        },
+                        onConnectRecent = onConnect,
                     )
                 }
             }

@@ -26,6 +26,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import app.musicopy.ui.Theme
 import app.musicopy.ui.components.Info
+import app.musicopy.ui.screens.HomeScreenSandbox
 import com.composeunstyled.Text
 import app.musicopy.ui.screens.PreTransferScreenSandbox
 import app.musicopy.ui.screens.TransferScreenSandbox
@@ -67,6 +68,11 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
+    HomeScreenSandbox()
+}
+
+@Composable
+fun SandboxScreenshot() {
     val isMobile = true
 
     val width = if (isMobile) 350 else WINDOW_WIDTH

@@ -1,6 +1,7 @@
 package app.musicopy.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,24 +24,35 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.musicopy.AppSettings
+import app.musicopy.mockNodeId
+import app.musicopy.now
+import app.musicopy.shortenNodeId
 import app.musicopy.ui.components.DetailBox
 import app.musicopy.ui.components.DetailItem
 import app.musicopy.ui.components.SectionHeader
 import app.musicopy.ui.components.TopBar
 import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.arrow_forward_24px
 import musicopy_root.musicopy.generated.resources.input_24px
 import musicopy_root.musicopy.generated.resources.qr_code_scanner_24px
 import org.jetbrains.compose.resources.painterResource
+import uniffi.musicopy.RecentServerModel
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun HomeScreen(
     onShowNodeStatus: () -> Unit,
 
+    recentServers: List<RecentServerModel>,
     onPickDownloadDirectory: () -> Unit,
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
+    onConnectRecent: (nodeId: String) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -131,10 +144,22 @@ fun HomeScreen(
                 }
             }
 
-            HomeSection("RECENT CONNECTIONS") {
-                Text("asdf")
-                Text("asdf")
-                Text("asdf")
+            if (recentServers.isNotEmpty()) {
+                HomeSection("RECENT CONNECTIONS") {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val shown = recentServers.sortedByDescending { it.connectedAt }.take(5)
+                        for (recentServer in shown) {
+                            RecentConnection(
+                                recentServer = recentServer,
+                                onConnect = {
+                                    onConnectRecent(recentServer.nodeId)
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -164,5 +189,73 @@ fun HomeSection(title: String, content: @Composable () -> Unit) {
         }
     }
     HorizontalDivider(thickness = 1.dp)
+}
+
+@Composable
+fun RecentConnection(
+    recentServer: RecentServerModel,
+    onConnect: () -> Unit,
+) {
+    val name = shortenNodeId(recentServer.nodeId)
+
+    val daysAgo = (now() - recentServer.connectedAt).toInt().seconds.inWholeDays
+    val readableDaysAgo = when (daysAgo) {
+        0L -> "today"
+        1L -> "1 day ago"
+        else -> "$daysAgo days ago"
+    }
+    val detail = "${shortenNodeId(recentServer.nodeId)}, $readableDaysAgo"
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onConnect)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Icon(
+                painter = painterResource(Res.drawable.arrow_forward_24px),
+                contentDescription = null
+            )
+        }
+    }
+}
+
+@Composable
+fun HomeScreenSandbox() {
+    HomeScreen(
+        onShowNodeStatus = {},
+
+        recentServers = buildList {
+            repeat(10) {
+                add(
+                    RecentServerModel(
+                        nodeId = mockNodeId(),
+                        connectedAt = now() - (0uL..1_000_000uL).random()
+                    )
+                )
+            }
+        },
+        onPickDownloadDirectory = {},
+        onConnectQRButtonClicked = {},
+        onConnectManuallyButtonClicked = {},
+        onConnectRecent = {},
+    )
 }
 

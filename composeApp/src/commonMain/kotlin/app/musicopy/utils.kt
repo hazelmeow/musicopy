@@ -105,7 +105,8 @@ fun mockNodeModel(
         connDirect = 3u,
         servers = servers,
         clients = clients,
-        trustedNodes = emptyList()
+        trustedNodes = emptyList(),
+        recentServers = emptyList(),
     )
 }
 
