@@ -173,7 +173,12 @@ fun App(
                     val client = model.node.clients.find { x -> x.nodeId == nodeId }
 
                     if (client?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
-                        navController.navigate(PreTransfer(nodeId = nodeId))
+                        navController.navigate(PreTransfer(nodeId = nodeId)) {
+                            // pop Waiting screen from back stack
+                            popUpTo<Waiting>() {
+                                inclusive = true
+                            }
+                        }
                     }
 
                     client?.let { clientModel ->
