@@ -19,3 +19,6 @@ data class PreTransfer(val nodeId: String)
 
 @Serializable
 data class Transfer(val nodeId: String)
+
+@Serializable
+data class Disconnected(val nodeId: String)

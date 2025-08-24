@@ -26,6 +26,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import app.musicopy.ui.Theme
 import app.musicopy.ui.components.Info
+import app.musicopy.ui.screens.DisconnectedScreenSandbox
 import app.musicopy.ui.screens.HomeScreenSandbox
 import com.composeunstyled.Text
 import app.musicopy.ui.screens.PreTransferScreenSandbox
@@ -68,7 +69,7 @@ private fun Sandbox(
 
 @Composable
 private fun SandboxContent() {
-    HomeScreenSandbox()
+    DisconnectedScreenSandbox()
 }
 
 @Composable

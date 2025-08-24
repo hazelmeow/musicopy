@@ -24,6 +24,8 @@ import app.musicopy.ui.screens.ConnectManually
 import app.musicopy.ui.screens.ConnectManuallyScreen
 import app.musicopy.ui.screens.ConnectQR
 import app.musicopy.ui.screens.ConnectQRScreen
+import app.musicopy.ui.screens.Disconnected
+import app.musicopy.ui.screens.DisconnectedScreen
 import app.musicopy.ui.screens.Home
 import app.musicopy.ui.screens.HomeScreen
 import app.musicopy.ui.screens.PreTransfer
@@ -35,7 +37,6 @@ import app.musicopy.ui.screens.WaitingScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.musicopy.CoreException
-import androidx.navigation.NavDestination.Companion.hasRoute
 
 @Composable
 fun App(
@@ -170,9 +171,9 @@ fun App(
                 val waiting: Waiting = backStackEntry.toRoute()
                 val nodeId = waiting.nodeId
                 model?.let { model ->
-                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
 
-                    if (client?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
+                    if (clientModel?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
                         navController.navigate(PreTransfer(nodeId = nodeId)) {
                             // pop Waiting screen from back stack
                             popUpTo<Waiting>() {
@@ -181,7 +182,7 @@ fun App(
                         }
                     }
 
-                    client?.let { clientModel ->
+                    clientModel?.let { clientModel ->
                         WaitingScreen(
                             onShowNodeStatus = onShowNodeStatus,
 
@@ -197,13 +198,19 @@ fun App(
                 val preTransfer: PreTransfer = backStackEntry.toRoute()
                 val nodeId = preTransfer.nodeId
                 model?.let { model ->
-                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
 
-                    val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
-                        null
-                    )
+                    // TODO: clientmodel just have a disconnected flag instead of removing immediately
+                    if (clientModel == null) {
+                        if (navController.currentDestination?.hasRoute<PreTransfer>() == true) {
+                            // navigate to Disconnected screen
+                            navController.navigate(Disconnected(nodeId = nodeId))
+                        }
+                    } else {
+                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                            null
+                        )
 
-                    client?.let { clientModel ->
                         PreTransferScreen(
                             onShowNodeStatus = onShowNodeStatus,
 
@@ -241,9 +248,14 @@ fun App(
                 val transfer: Transfer = backStackEntry.toRoute()
                 val nodeId = transfer.nodeId
                 model?.let { model ->
-                    val client = model.node.clients.find { x -> x.nodeId == nodeId }
+                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
 
-                    client?.let { clientModel ->
+                    if (clientModel == null) {
+                        if (navController.currentDestination?.hasRoute<Transfer>() == true) {
+                            // navigate to Disconnected screen
+                            navController.navigate(Disconnected(nodeId = nodeId))
+                        }
+                    } else {
                         TransferScreen(
                             onShowNodeStatus = onShowNodeStatus,
 
@@ -254,6 +266,23 @@ fun App(
                             }
                         )
                     }
+                }
+            }
+            composable<Disconnected> { backStackEntry ->
+                val route: Disconnected = backStackEntry.toRoute()
+                val nodeId = route.nodeId
+                model?.let { model ->
+                    DisconnectedScreen(
+                        onShowNodeStatus = onShowNodeStatus,
+
+                        nodeId = nodeId,
+                        isConnecting = isConnecting,
+                        onReconnect = { onConnect(nodeId) },
+                        onCancel = {
+                            // pop back to home
+                            navController.popBackStack(Home, inclusive = false)
+                        }
+                    )
                 }
             }
         }
