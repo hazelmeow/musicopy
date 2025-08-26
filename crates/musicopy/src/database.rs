@@ -1,6 +1,7 @@
 use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
+use rusqlite::OptionalExtension;
 use std::path::Path;
 
 pub struct Root {
@@ -355,6 +356,21 @@ impl Database {
         self.conn
             .execute("DELETE FROM trusted_nodes WHERE node_id = ?", [&node_id])?;
         Ok(())
+    }
+
+    pub fn is_node_trusted(&self, node_id: NodeId) -> anyhow::Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM trusted_nodes WHERE node_id = ? LIMIT 1")
+            .expect("should prepare statement");
+
+        let node_id = node_id_to_string(&node_id);
+        let exists: Option<u8> = stmt
+            .query_row([&node_id], |row| row.get(0))
+            .optional()
+            .context("failed to query trusted node")?;
+
+        Ok(exists.is_some())
     }
 
     pub fn update_recent_server(&self, node_id: NodeId, connected_at: u64) -> anyhow::Result<()> {

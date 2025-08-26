@@ -14,27 +14,20 @@ use crate::{
 };
 use anyhow::Context;
 use iroh::{NodeAddr, NodeId, SecretKey};
-use log::{debug, error};
+use log::{debug, error, warn};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::mpsc;
 
 uniffi::setup_scaffolding!();
-
-/// State sent to Compose.
-#[derive(Debug, uniffi::Record)]
-pub struct Model {
-    pub node: NodeModel,
-    pub library: LibraryModel,
-}
 
 /// Foreign trait implemented in Compose for receiving events from the Rust core.
 #[uniffi::export(with_foreign)]
 pub trait EventHandler: Send + Sync {
-    fn on_update(&self, model: Model);
+    fn on_library_model_snapshot(&self, model: LibraryModel);
+    fn on_node_model_snapshot(&self, model: NodeModel);
 }
 
 #[derive(Debug, uniffi::Record)]
@@ -51,17 +44,19 @@ pub struct CoreOptions {
 }
 
 /// Long-lived object created by Compose as the entry point to the Rust core.
+///
+/// The core is split into separate logical components. Components may require
+/// async initialization, and the core needs handles to them to route commands
+/// and queries from the UI.
 #[derive(uniffi::Object)]
 pub struct Core {
-    event_handler: Arc<dyn EventHandler>,
-
     db: Arc<Mutex<Database>>,
 
-    node_tx: mpsc::UnboundedSender<NodeCommand>,
-    library_tx: mpsc::UnboundedSender<LibraryCommand>,
+    node: Arc<Node>,
+    library: Arc<Library>,
 }
 
-// Stub debug implementation
+// stub debug implementation
 impl std::fmt::Debug for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Core").finish()
@@ -70,8 +65,18 @@ impl std::fmt::Debug for Core {
 
 #[uniffi::export]
 impl Core {
+    /// Starts the app core.
+    ///
+    /// This is async, since components may require async initialization before
+    /// their handles are ready. The constructor itself runs on the UI's async
+    /// runtime, but the core spawns its own thread with a Tokio runtime for
+    /// actual app logic. The constructor only uses async to wait for component
+    /// handles to be ready, since they are spawned on the Tokio runtime and
+    /// sent back to the constructor using channels. The UI should wait for the
+    /// core before the initial render, so that it can have initial data ready
+    /// immediately.
     #[uniffi::constructor]
-    pub fn new(
+    pub async fn start(
         event_handler: Arc<dyn EventHandler>,
         options: CoreOptions,
     ) -> Result<Arc<Self>, CoreError> {
@@ -166,12 +171,10 @@ impl Core {
 
         let node_id = NodeId::from(secret_key.public());
 
-        let (node_tx, node_rx) = mpsc::unbounded_channel();
-        let (library_tx, library_rx) = mpsc::unbounded_channel();
+        let (res_tx, res_rx) = tokio::sync::oneshot::channel();
 
         // spawn node thread
         std::thread::spawn({
-            let event_handler = event_handler.clone();
             let db = db.clone();
             move || {
                 // TODO: tune number of threads on mobile?
@@ -183,83 +186,120 @@ impl Core {
                 builder.block_on(async move {
                     debug!("core: inside async runtime");
 
-                    let db2 = db.clone();
-                    let (node, run_token) =
-                        match Node::new(secret_key, db2, transcode_status_cache.clone()).await {
-                            Ok(x) => x,
-                            Err(e) => {
-                                error!("core: error creating node: {e:#}");
-                                return;
-                            }
-                        };
+                    // initialize components concurrently
+                    let (library_res, node_res) = tokio::join!(
+                        Library::new(
+                            event_handler.clone(),
+                            db.clone(),
+                            node_id,
+                            transcodes_dir.clone(),
+                            transcode_status_cache.clone(),
+                        ),
+                        Node::new(event_handler, secret_key, db, transcode_status_cache,),
+                    );
 
-                    debug!("core: inside async runtime - created node");
+                    let (library, library_run) = match library_res {
+                        Ok(x) => x,
+                        Err(e) => {
+                            error!("core: error creating library: {e:#}");
+                            res_tx
+                                .send(Err(core_error!("failed to create library")))
+                                .expect("failed to send result to core constructor");
+                            return;
+                        }
+                    };
 
-                    // TODO clean this up
-                    // TODO pass path to files from app
-                    let library = Library::new(db, node_id, transcodes_dir, transcode_status_cache)
-                        .await
-                        .unwrap();
-                    tokio::spawn({
+                    let (node, node_run) = match node_res {
+                        Ok(x) => x,
+                        Err(e) => {
+                            error!("core: error creating node: {e:#}");
+                            res_tx
+                                .send(Err(core_error!("failed to create node")))
+                                .expect("failed to send result to core constructor");
+                            return;
+                        }
+                    };
+
+                    res_tx
+                        .send(Ok((library.clone(), node.clone())))
+                        .expect("failed to send result to core constructor");
+
+                    let mut library_task = tokio::spawn({
                         let library = library.clone();
                         async move {
-                            if let Err(e) = library.run(library_rx).await {
+                            if let Err(e) = library.run(library_run).await {
                                 error!("core: error running library: {e:#}");
                             }
                         }
                     });
 
-                    // spawn state polling task
-                    // TODO: reactive instead of polling?
-                    tokio::spawn({
+                    let mut node_task = tokio::spawn({
                         let node = node.clone();
                         async move {
-                            debug!("core: inside polling task");
-
-                            loop {
-                                event_handler.on_update(Model {
-                                    node: node.model(),
-                                    library: library.model(),
-                                });
-
-                                tokio::time::sleep(std::time::Duration::from_secs_f64(1.0)).await;
+                            if let Err(e) = node.run(node_run).await {
+                                error!("core: error running node: {e:#}");
                             }
                         }
                     });
 
-                    debug!("core: inside async runtime - about to run node");
+                    loop {
+                        tokio::select! {
+                            res = &mut library_task => {
+                                match res {
+                                    Ok(()) => warn!("core: library task exited"),
+                                    Err(e) => error!("core: library task panicked: {e:#}"),
+                                }
+                            }
 
-                    if let Err(e) = node.run(node_rx, run_token).await {
-                        error!("core: error running node: {e:#}");
+                            res = &mut node_task => {
+                                match res {
+                                    Ok(()) => warn!("core: node task exited"),
+                                    Err(e) => error!("core: node task panicked: {e:#}"),
+                                }
+                            }
+
+                            else => {
+                                break;
+                            }
+                        }
                     }
 
-                    debug!("core: inside async runtime - exiting");
+                    debug!("core: async runtime exiting");
                 });
             }
         });
 
-        Ok(Arc::new(Self {
-            event_handler,
+        let (library, node) = async_std::future::timeout(Duration::from_secs(10), res_rx)
+            .await
+            .map_err(|_elapsed| core_error!("timed out waiting for core components to initialize"))?
+            .map_err(|_dropped| {
+                core_error!("core components failed to initialize, sender dropped")
+            })?
+            .context("core components failed to initialize")?;
 
-            db,
-
-            node_tx,
-            library_tx,
-        }))
+        Ok(Arc::new(Self { db, library, node }))
     }
 
     pub fn shutdown(&self) -> Result<(), CoreError> {
         debug!("core: shutting down");
 
-        self.node_tx
+        self.node
             .send(NodeCommand::Stop)
             .context("failed to send stop command to node thread")?;
 
-        self.library_tx
+        self.library
             .send(LibraryCommand::Stop)
             .context("failed to send stop command to library thread")?;
 
         Ok(())
+    }
+
+    pub fn get_node_model(&self) -> Result<NodeModel, CoreError> {
+        Ok(self.node.get_model())
+    }
+
+    pub fn get_library_model(&self) -> Result<LibraryModel, CoreError> {
+        Ok(self.library.model())
     }
 
     pub async fn connect(&self, node_id: &str) -> Result<(), CoreError> {
@@ -268,7 +308,7 @@ impl Core {
 
         let (callback_tx, callback_rx) = tokio::sync::oneshot::channel();
 
-        self.node_tx
+        self.node
             .send(NodeCommand::Connect {
                 addr: node_addr,
                 callback: callback_tx,
@@ -286,11 +326,11 @@ impl Core {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
         // TODO: this shouldn't happen here
-        self.node_tx
+        self.node
             .send(NodeCommand::SetDownloadDirectory(download_directory.into()))
             .context("failed to send to node thread")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::DownloadAll { client: node_id })
             .context("failed to send to node thread")?;
 
@@ -306,11 +346,11 @@ impl Core {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
         // TODO: this shouldn't happen here
-        self.node_tx
+        self.node
             .send(NodeCommand::SetDownloadDirectory(download_directory.into()))
             .context("failed to send to node thread")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::DownloadPartial {
                 client: node_id,
                 items,
@@ -323,7 +363,7 @@ impl Core {
     pub fn accept_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::AcceptConnection(node_id))
             .context("failed to send to node thread")?;
 
@@ -333,11 +373,11 @@ impl Core {
     pub fn accept_connection_and_trust(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::AcceptConnection(node_id))
             .context("failed to send to node thread")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::TrustNode(node_id))
             .context("failed to send to node thread")?;
 
@@ -347,7 +387,7 @@ impl Core {
     pub fn deny_connection(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::DenyConnection(node_id))
             .context("failed to send to node thread")?;
 
@@ -357,7 +397,7 @@ impl Core {
     pub fn close_client(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::CloseClient(node_id))
             .context("failed to send to node thread")?;
 
@@ -367,7 +407,7 @@ impl Core {
     pub fn close_server(&self, node_id: &str) -> Result<(), CoreError> {
         let node_id: NodeId = node_id.parse().context("failed to parse node id")?;
 
-        self.node_tx
+        self.node
             .send(NodeCommand::CloseServer(node_id))
             .context("failed to send to node thread")?;
 
@@ -375,7 +415,7 @@ impl Core {
     }
 
     pub fn add_library_root(&self, name: String, path: String) -> Result<(), CoreError> {
-        self.library_tx
+        self.library
             .send(LibraryCommand::AddRoot { name, path })
             .context("failed to send to library thread")?;
 
@@ -383,7 +423,7 @@ impl Core {
     }
 
     pub fn remove_library_root(&self, name: String) -> Result<(), CoreError> {
-        self.library_tx
+        self.library
             .send(LibraryCommand::RemoveRoot { name })
             .context("failed to send to library thread")?;
 
@@ -392,7 +432,7 @@ impl Core {
 
     // TODO: async wait for completion or return progress somehow
     pub fn rescan_library(&self) -> Result<(), CoreError> {
-        self.library_tx
+        self.library
             .send(LibraryCommand::Rescan)
             .context("failed to send to library thread")?;
         Ok(())

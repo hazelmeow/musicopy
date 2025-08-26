@@ -83,12 +83,9 @@ impl<'a> App<'a> {
             .divider(" ")
             .render(tabs_area, frame.buffer_mut());
 
-        // id
-        if let Some(model) = &self.model {
-            shorten_id(model.node.node_id.clone())
-                .yellow()
-                .render(id_area, frame.buffer_mut());
-        }
+        shorten_id(self.node_model.node_id.clone())
+            .yellow()
+            .render(id_area, frame.buffer_mut());
 
         // title
         "Musicopy TUI".bold().render(title_area, frame.buffer_mut());
@@ -127,41 +124,32 @@ impl<'a> App<'a> {
             .title_top(instructions.right_aligned())
             .border_set(border::THICK);
 
-        let Some(model) = &self.model else {
-            let empty_text = Text::from("Waiting for model...");
-
-            Paragraph::new(empty_text)
-                .block(block)
-                .render(area, frame.buffer_mut());
-            return;
-        };
-
-        let trusted_nodes = model
-            .node
+        let trusted_nodes = self
+            .node_model
             .trusted_nodes
             .iter()
             .map(shorten_id)
             .collect::<Vec<_>>()
             .join(", ");
 
-        let recent_servers = model
-            .node
+        let recent_servers = self
+            .node_model
             .recent_servers
             .iter()
             .map(|n| format!("{} ({})", shorten_id(&n.node_id), n.connected_at))
             .collect::<Vec<_>>()
             .join(", ");
 
-        let active_servers = model
-            .node
+        let active_servers = self
+            .node_model
             .servers
             .iter()
             .filter(|s| s.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
-        let pending_servers = model
-            .node
+        let pending_servers = self
+            .node_model
             .servers
             .iter()
             .filter(|s| !s.accepted)
@@ -169,16 +157,16 @@ impl<'a> App<'a> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let active_clients = model
-            .node
+        let active_clients = self
+            .node_model
             .clients
             .iter()
             .filter(|c| c.accepted)
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
-        let pending_clients = model
-            .node
+        let pending_clients = self
+            .node_model
             .clients
             .iter()
             .filter(|c| !c.accepted)
@@ -190,11 +178,11 @@ impl<'a> App<'a> {
             Line::from("Network".bold()),
             Line::from(vec![
                 "Node ID: ".into(),
-                model.node.node_id.clone().yellow(),
+                self.node_model.node_id.clone().yellow(),
             ]),
             Line::from(vec![
                 "Home Relay: ".into(),
-                model.node.home_relay.clone().yellow(),
+                self.node_model.home_relay.clone().yellow(),
             ]),
             Line::from(""),
             Line::from(vec!["Trusted Nodes: ".into(), trusted_nodes.yellow()]),
@@ -209,7 +197,7 @@ impl<'a> App<'a> {
             Line::from("Library".bold()),
         ];
 
-        if model.library.local_roots.is_empty() {
+        if self.library_model.local_roots.is_empty() {
             // library help text if empty
             lines.push(Line::from(vec![
                 "Empty, add a path using ".into(),
@@ -217,7 +205,7 @@ impl<'a> App<'a> {
             ]));
         } else {
             // library roots
-            lines.extend(model.library.local_roots.iter().map(|root| {
+            lines.extend(self.library_model.local_roots.iter().map(|root| {
                 Line::from(vec![
                     " - ".into(),
                     root.name.clone().blue(),
@@ -233,29 +221,25 @@ impl<'a> App<'a> {
                 Line::from(""),
                 Line::from(vec![
                     "Transcodes: ".into(),
-                    model
-                        .library
+                    self.library_model
                         .transcode_count_queued
                         .get()
                         .to_string()
                         .green(),
                     " queued / ".into(),
-                    model
-                        .library
+                    self.library_model
                         .transcode_count_inprogress
                         .get()
                         .to_string()
                         .green(),
                     " in progress / ".into(),
-                    model
-                        .library
+                    self.library_model
                         .transcode_count_ready
                         .get()
                         .to_string()
                         .green(),
                     " ready / ".into(),
-                    model
-                        .library
+                    self.library_model
                         .transcode_count_failed
                         .get()
                         .to_string()
@@ -271,8 +255,8 @@ impl<'a> App<'a> {
             .as_secs();
 
         // server jobs
-        let server_jobs = model
-            .node
+        let server_jobs = self
+            .node_model
             .servers
             .iter()
             .flat_map(|server| {
@@ -367,8 +351,8 @@ impl<'a> App<'a> {
         }
 
         // client jobs
-        let client_jobs = model
-            .node
+        let client_jobs = self
+            .node_model
             .clients
             .iter()
             .flat_map(|client| {

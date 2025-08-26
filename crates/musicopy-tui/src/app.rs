@@ -3,7 +3,11 @@ use crate::{
     ui::log::LogState,
 };
 use anyhow::Context;
-use musicopy::{Core, CoreOptions, Model, node::DownloadPartialItemModel};
+use musicopy::{
+    Core, CoreOptions,
+    library::LibraryModel,
+    node::{DownloadPartialItemModel, NodeModel},
+};
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
@@ -26,7 +30,8 @@ pub struct App<'a> {
 
     pub log_state: LogState,
     pub command_state: TextState<'a>,
-    pub model: Option<Model>, // TODO: would be nice to make this not an option
+    pub library_model: LibraryModel,
+    pub node_model: NodeModel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,7 +61,8 @@ pub enum AppEvent {
 
     Screen(AppScreen),
 
-    Model(Box<Model>),
+    LibraryModel(Box<LibraryModel>),
+    NodeModel(Box<NodeModel>),
 }
 
 macro_rules! app_log {
@@ -72,14 +78,18 @@ impl<'a> App<'a> {
         // initialize as early as possible
         let events = EventHandler::new();
 
-        let core = Core::new(
+        let core = Core::start(
             Arc::new(AppEventHandler),
             CoreOptions {
                 init_logging: false,
                 in_memory,
                 project_dirs: None,
             },
-        )?;
+        )
+        .await?;
+
+        let library_model = core.get_library_model()?;
+        let node_model = core.get_node_model()?;
 
         Ok(Self {
             running: true,
@@ -94,7 +104,9 @@ impl<'a> App<'a> {
 
             log_state: LogState::default(),
             command_state: TextState::default(),
-            model: None,
+
+            library_model,
+            node_model,
         })
     }
 
@@ -212,8 +224,11 @@ impl<'a> App<'a> {
                 self.screen = screen;
             }
 
-            AppEvent::Model(model) => {
-                self.model = Some(*model);
+            AppEvent::LibraryModel(model) => {
+                self.library_model = *model;
+            }
+            AppEvent::NodeModel(model) => {
+                self.node_model = *model;
             }
         }
         Ok(())
@@ -260,11 +275,7 @@ impl<'a> App<'a> {
             "a" | "accept" => {
                 app_log!("accepting pending servers");
 
-                let Some(model) = &self.model else {
-                    anyhow::bail!("model not initialized");
-                };
-
-                for server in &model.node.servers {
+                for server in &self.node_model.servers {
                     if !server.accepted {
                         app_log!("accepting server: {}", server.node_id);
                         self.core.accept_connection(&server.node_id)?;
@@ -275,11 +286,7 @@ impl<'a> App<'a> {
             "t" | "trust" => {
                 app_log!("accepting and trusting pending servers");
 
-                let Some(model) = &self.model else {
-                    anyhow::bail!("model not initialized");
-                };
-
-                for server in &model.node.servers {
+                for server in &self.node_model.servers {
                     if !server.accepted {
                         app_log!("accepting and trusting server: {}", server.node_id);
                         self.core.accept_connection_and_trust(&server.node_id)?;
@@ -307,15 +314,11 @@ impl<'a> App<'a> {
             "dc" | "disconnect" => {
                 app_log!("disconnecting everything");
 
-                let Some(model) = &self.model else {
-                    anyhow::bail!("model not initialized");
-                };
-
-                for client in &model.node.clients {
+                for client in &self.node_model.clients {
                     self.core.close_client(&client.node_id)?;
                 }
 
-                for server in &model.node.servers {
+                for server in &self.node_model.servers {
                     self.core.close_server(&server.node_id)?;
                 }
             }
@@ -333,12 +336,8 @@ impl<'a> App<'a> {
                     anyhow::bail!("client number must be greater than 0");
                 }
 
-                let Some(model) = &self.model else {
-                    anyhow::bail!("model not initialized");
-                };
-
-                let node_id = model
-                    .node
+                let node_id = self
+                    .node_model
                     .clients
                     .iter()
                     .filter(|c| c.accepted)
@@ -370,12 +369,8 @@ impl<'a> App<'a> {
                     anyhow::bail!("client number must be greater than 0");
                 }
 
-                let Some(model) = &self.model else {
-                    anyhow::bail!("model not initialized");
-                };
-
-                let client_model = model
-                    .node
+                let client_model = self
+                    .node_model
                     .clients
                     .iter()
                     .filter(|c| c.accepted)
@@ -437,7 +432,11 @@ impl<'a> App<'a> {
 struct AppEventHandler;
 
 impl musicopy::EventHandler for AppEventHandler {
-    fn on_update(&self, model: Model) {
-        app_send!(AppEvent::Model(Box::new(model)));
+    fn on_library_model_snapshot(&self, model: LibraryModel) {
+        app_send!(AppEvent::LibraryModel(Box::new(model)));
+    }
+
+    fn on_node_model_snapshot(&self, model: NodeModel) {
+        app_send!(AppEvent::NodeModel(Box::new(model)));
     }
 }

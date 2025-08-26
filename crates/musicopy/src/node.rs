@@ -9,6 +9,7 @@
 //! Servers send files, primarily used in the desktop app.
 
 use crate::{
+    EventHandler,
     database::Database,
     fs::{OpenMode, TreeFile, TreePath},
     library::transcode::{TranscodeStatus, TranscodeStatusCache},
@@ -22,10 +23,11 @@ use iroh::{
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
 };
+use log::error;
 use n0_future::future::Boxed;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -44,7 +46,7 @@ use tokio_util::{
 };
 
 /// Model of progress for a transfer job.
-#[derive(Debug, uniffi::Enum)]
+#[derive(Debug, Clone, uniffi::Enum)]
 pub enum TransferJobProgressModel {
     Requested,
     Transcoding,
@@ -63,7 +65,7 @@ pub enum TransferJobProgressModel {
 }
 
 /// Model of a transfer job.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct TransferJobModel {
     pub job_id: u64,
     pub file_root: String,
@@ -73,7 +75,7 @@ pub struct TransferJobModel {
 }
 
 /// Model of an incoming connection.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct ServerModel {
     pub name: String,
     pub node_id: String,
@@ -88,7 +90,7 @@ pub struct ServerModel {
 }
 
 /// Model of an unknown, estimated, or actual file size.
-#[derive(Debug, uniffi::Enum)]
+#[derive(Debug, Clone, uniffi::Enum)]
 pub enum FileSizeModel {
     Unknown,
     Estimated(u64),
@@ -96,7 +98,7 @@ pub enum FileSizeModel {
 }
 
 /// Model of an item in the index sent by the server.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct IndexItemModel {
     pub node_id: String,
     pub root: String,
@@ -109,7 +111,7 @@ pub struct IndexItemModel {
 }
 
 /// Model of an outgoing connection.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct ClientModel {
     pub name: String,
     pub node_id: String,
@@ -125,16 +127,19 @@ pub struct ClientModel {
 }
 
 /// Model of a recently connected server.
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct RecentServerModel {
     pub node_id: String,
     pub connected_at: u64,
 }
 
 /// Node state sent to Compose.
-#[derive(Debug, uniffi::Record)]
+///
+/// Needs to be Clone to send snapshots to the UI.
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct NodeModel {
     pub node_id: String,
+
     pub home_relay: String,
 
     pub send_ipv4: u64,
@@ -190,14 +195,15 @@ pub enum NodeCommand {
     Stop,
 }
 
-#[derive(Debug)]
 pub struct Node {
+    event_handler: Arc<dyn EventHandler>,
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
 
     router: Router,
     protocol: Protocol,
 
+    command_tx: mpsc::UnboundedSender<NodeCommand>,
     client_handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
 
     servers: Mutex<HashMap<NodeId, ServerHandle>>,
@@ -205,11 +211,24 @@ pub struct Node {
 
     download_directory: Arc<Mutex<Option<String>>>,
 
-    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
+    model: Mutex<NodeModel>,
 }
 
+// stub debug implementation
+impl std::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node").finish()
+    }
+}
+
+/// The resources needed to run the Node run loop.
+///
+/// This is created by Node::new() and passed linearly to Node::run(). This
+/// pattern allows the run loop to own and mutate these resources while hiding
+/// the details from the public API.
 #[derive(Debug)]
-pub struct NodeRunToken {
+pub struct NodeRun {
+    command_rx: mpsc::UnboundedReceiver<NodeCommand>,
     server_handle_rx: mpsc::UnboundedReceiver<(NodeId, ServerHandle)>,
     server_closed_rx: mpsc::UnboundedReceiver<NodeId>,
     client_handle_rx: mpsc::UnboundedReceiver<(NodeId, ClientHandle)>,
@@ -217,17 +236,12 @@ pub struct NodeRunToken {
 
 impl Node {
     pub async fn new(
+        event_handler: Arc<dyn EventHandler>,
         secret_key: SecretKey,
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
-    ) -> anyhow::Result<(Arc<Self>, NodeRunToken)> {
-        // get trusted nodes from db
-        let trusted_nodes = {
-            let db = db.lock().unwrap();
-            let trusted_nodes = db.get_trusted_nodes()?;
-            Arc::new(Mutex::new(trusted_nodes.into_iter().collect()))
-        };
-
+    ) -> anyhow::Result<(Arc<Self>, NodeRun)> {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
         let (server_closed_tx, server_closed_rx) = mpsc::unbounded_channel();
         let (client_handle_tx, client_handle_rx) = mpsc::unbounded_channel();
@@ -240,7 +254,6 @@ impl Node {
         let protocol = Protocol::new(
             db.clone(),
             transcode_status_cache.clone(),
-            trusted_nodes.clone(),
             server_handle_tx,
             server_closed_tx,
         );
@@ -249,13 +262,36 @@ impl Node {
             .accept(Protocol::ALPN, protocol.clone())
             .spawn();
 
+        let model = NodeModel {
+            node_id: router.endpoint().node_id().to_string(),
+
+            home_relay: "none".to_string(), // TODO
+
+            send_ipv4: 0,
+            send_ipv6: 0,
+            send_relay: 0,
+            recv_ipv4: 0,
+            recv_ipv6: 0,
+            recv_relay: 0,
+            conn_success: 0,
+            conn_direct: 0,
+
+            servers: Vec::new(),
+            clients: Vec::new(),
+
+            trusted_nodes: Default::default(),
+            recent_servers: Vec::new(),
+        };
+
         let node = Arc::new(Self {
+            event_handler,
             db,
             transcode_status_cache,
 
             router,
             protocol,
 
+            command_tx,
             client_handle_tx,
 
             servers: Mutex::new(HashMap::new()),
@@ -263,24 +299,79 @@ impl Node {
 
             download_directory: Arc::new(Mutex::new(None)),
 
-            trusted_nodes,
+            model: Mutex::new(model),
         });
 
-        let node_run = NodeRunToken {
+        // initialize model
+        node.update_model(|model| {
+            node.update_model_metrics(model);
+            node.update_model_trusted_nodes(model);
+        });
+
+        let node_run = NodeRun {
+            command_rx,
             server_handle_rx,
             server_closed_rx,
             client_handle_rx,
         };
 
+        // spawn metrics polling task
+        tokio::spawn({
+            let node = node.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    node.update_model(|model| {
+                        node.update_model_metrics(model);
+                    });
+                }
+            }
+        });
+
+        // TODO: observe iroh changes instead of polling
+        // spawn iroh polling task
+        tokio::spawn({
+            let node = node.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    node.update_model(|model| {
+                        let home_relay = node
+                            .router
+                            .endpoint()
+                            .home_relay()
+                            .get()
+                            .ok()
+                            .flatten()
+                            .map(|url| url.to_string())
+                            .unwrap_or_else(|| "none".to_string());
+
+                        model.home_relay = home_relay;
+                    });
+                }
+            }
+        });
+
+        // TODO: replace with push-based updates
+        // spawn misc polling task
+        tokio::spawn({
+            let node = node.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    node.update_model(|model| {
+                        node.update_model_todo(model);
+                    });
+                }
+            }
+        });
+
         Ok((node, node_run))
     }
 
-    pub async fn run(
-        self: &Arc<Self>,
-        mut rx: mpsc::UnboundedReceiver<NodeCommand>,
-        run_token: NodeRunToken,
-    ) -> anyhow::Result<()> {
-        let NodeRunToken {
+    pub async fn run(self: &Arc<Self>, run_token: NodeRun) -> anyhow::Result<()> {
+        let NodeRun {
+            mut command_rx,
             mut server_handle_rx,
             mut server_closed_rx,
             mut client_handle_rx,
@@ -288,7 +379,7 @@ impl Node {
 
         loop {
             tokio::select! {
-                Some(command) = rx.recv() => {
+                Some(command) = command_rx.recv() => {
                     match command {
                         NodeCommand::SetDownloadDirectory(path) => {
                             let mut download_directory = self.download_directory.lock().unwrap();
@@ -379,12 +470,6 @@ impl Node {
                         }
 
                         NodeCommand::TrustNode(node_id) => {
-                            // add to in-memory list
-                            {
-                                let mut trusted_nodes = self.trusted_nodes.lock().unwrap();
-                                trusted_nodes.insert(node_id);
-                            }
-
                             // persist to database
                             {
                                 let db = self.db.lock().unwrap();
@@ -392,14 +477,13 @@ impl Node {
                                     log::error!("failed to add trusted node to database: {e:#}");
                                 }
                             }
+
+                            // update model
+                            self.update_model(|model| {
+                                self.update_model_trusted_nodes(model);
+                            });
                         }
                         NodeCommand::UntrustNode(node_id) => {
-                            // remove from in-memory list
-                            {
-                                let mut trusted_nodes = self.trusted_nodes.lock().unwrap();
-                                trusted_nodes.remove(&node_id);
-                            }
-
                             // persist to database
                             {
                                 let db = self.db.lock().unwrap();
@@ -407,6 +491,11 @@ impl Node {
                                     log::error!("failed to remove trusted node from database: {e:#}");
                                 }
                             }
+
+                            // update model
+                            self.update_model(|model| {
+                                self.update_model_trusted_nodes(model);
+                            });
                         }
 
                         NodeCommand::Stop => break,
@@ -440,47 +529,46 @@ impl Node {
         Ok(())
     }
 
-    async fn connect(self: &Arc<Self>, addr: NodeAddr) -> anyhow::Result<()> {
-        // connect before spawning the task, so we can return an error immediately
-        let connection = self.router.endpoint().connect(addr, Protocol::ALPN).await?;
-
-        let node_id = connection.remote_node_id()?;
-        log::info!("opened connection to {node_id}");
-
-        let db = self.db.clone();
-        let client_handle_tx = self.client_handle_tx.clone();
-        let node = self.clone();
-        let download_directory = self.download_directory.clone();
-        tokio::spawn(async move {
-            let client = Client::new(db, client_handle_tx, connection, download_directory);
-
-            if let Err(e) = client.run().await {
-                log::error!("error during client.run(): {e:#}");
-            }
-
-            // remove handle from hashmap
-            {
-                let mut clients = node.clients.lock().unwrap();
-                clients.remove(&node_id);
-            }
-        });
-
-        Ok(())
+    pub fn get_model(self: &Arc<Self>) -> NodeModel {
+        let model = self.model.lock().unwrap();
+        model.clone()
     }
 
-    pub fn model(&self) -> NodeModel {
-        let home_relay = self
-            .router
-            .endpoint()
-            .home_relay()
-            .get()
-            .ok()
-            .flatten()
-            .map(|url| url.to_string())
-            .unwrap_or_else(|| "none".to_string());
+    fn update_model(self: &Arc<Self>, update: impl FnOnce(&mut NodeModel)) {
+        let mut model = self.model.lock().unwrap();
+        update(&mut model);
+        self.event_handler.on_node_model_snapshot(model.clone());
+    }
 
+    fn update_model_metrics(&self, model: &mut NodeModel) {
         let metrics = self.router.endpoint().metrics();
+        model.send_ipv4 = metrics.magicsock.send_ipv4.get();
+        model.send_ipv6 = metrics.magicsock.send_ipv6.get();
+        model.send_relay = metrics.magicsock.send_relay.get();
+        model.recv_ipv4 = metrics.magicsock.recv_data_ipv4.get();
+        model.recv_ipv6 = metrics.magicsock.recv_data_ipv6.get();
+        model.recv_relay = metrics.magicsock.recv_data_relay.get();
+        model.conn_success = metrics.magicsock.connection_handshake_success.get();
+        model.conn_direct = metrics.magicsock.connection_became_direct.get();
+    }
 
+    fn update_model_trusted_nodes(&self, model: &mut NodeModel) {
+        let db = self.db.lock().unwrap();
+        let trusted_nodes = db.get_trusted_nodes();
+        match trusted_nodes {
+            Ok(trusted_nodes) => {
+                model.trusted_nodes = trusted_nodes
+                    .iter()
+                    .map(|node_id| node_id.to_string())
+                    .collect();
+            }
+            Err(e) => {
+                error!("failed update node model trusted nodes from database: {e:#}");
+            }
+        }
+    }
+
+    fn update_model_todo(&self, model: &mut NodeModel) {
         let servers = {
             let servers = self.servers.lock().unwrap();
             let mut servers = servers
@@ -693,14 +781,6 @@ impl Node {
             clients
         };
 
-        let trusted_nodes = {
-            let trusted_nodes = self.trusted_nodes.lock().unwrap();
-            trusted_nodes
-                .iter()
-                .map(|node_id| node_id.to_string())
-                .collect()
-        };
-
         let recent_servers = {
             let db = self.db.lock().unwrap();
             match db.get_recent_servers() {
@@ -718,25 +798,45 @@ impl Node {
             }
         };
 
-        NodeModel {
-            node_id: self.router.endpoint().node_id().to_string(),
-            home_relay,
+        model.servers = servers;
+        model.clients = clients;
 
-            send_ipv4: metrics.magicsock.send_ipv4.get(),
-            send_ipv6: metrics.magicsock.send_ipv6.get(),
-            send_relay: metrics.magicsock.send_relay.get(),
-            recv_ipv4: metrics.magicsock.recv_data_ipv4.get(),
-            recv_ipv6: metrics.magicsock.recv_data_ipv6.get(),
-            recv_relay: metrics.magicsock.recv_data_relay.get(),
-            conn_success: metrics.magicsock.connection_handshake_success.get(),
-            conn_direct: metrics.magicsock.connection_became_direct.get(),
+        model.recent_servers = recent_servers;
+    }
 
-            servers,
-            clients,
+    // TODO: maybe replace with methods?
+    pub fn send(self: &Arc<Self>, command: NodeCommand) -> anyhow::Result<()> {
+        self.command_tx
+            .send(command)
+            .map_err(|e| anyhow::anyhow!("failed to send command: {e:?}"))
+    }
 
-            trusted_nodes,
-            recent_servers,
-        }
+    async fn connect(self: &Arc<Self>, addr: NodeAddr) -> anyhow::Result<()> {
+        // connect before spawning the task, so we can return an error immediately
+        let connection = self.router.endpoint().connect(addr, Protocol::ALPN).await?;
+
+        let node_id = connection.remote_node_id()?;
+        log::info!("opened connection to {node_id}");
+
+        let db = self.db.clone();
+        let client_handle_tx = self.client_handle_tx.clone();
+        let node = self.clone();
+        let download_directory = self.download_directory.clone();
+        tokio::spawn(async move {
+            let client = Client::new(db, client_handle_tx, connection, download_directory);
+
+            if let Err(e) = client.run().await {
+                log::error!("error during client.run(): {e:#}");
+            }
+
+            // remove handle from hashmap
+            {
+                let mut clients = node.clients.lock().unwrap();
+                clients.remove(&node_id);
+            }
+        });
+
+        Ok(())
     }
 }
 
@@ -744,7 +844,6 @@ impl Node {
 struct Protocol {
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
-    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
 
     server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
     server_closed_tx: mpsc::UnboundedSender<NodeId>,
@@ -756,7 +855,6 @@ impl Protocol {
     fn new(
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
-        trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
 
         server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
         server_closed_tx: mpsc::UnboundedSender<NodeId>,
@@ -764,7 +862,6 @@ impl Protocol {
         Self {
             db,
             transcode_status_cache,
-            trusted_nodes,
 
             server_handle_tx,
             server_closed_tx,
@@ -776,7 +873,6 @@ impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
         let transcode_status_cache = self.transcode_status_cache.clone();
-        let trusted_nodes = self.trusted_nodes.clone();
 
         let server_handle_tx = self.server_handle_tx.clone();
         let server_closed_tx = self.server_closed_tx.clone();
@@ -785,13 +881,7 @@ impl ProtocolHandler for Protocol {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
 
-            let server = Server::new(
-                db,
-                transcode_status_cache,
-                trusted_nodes,
-                connection,
-                server_handle_tx,
-            );
+            let server = Server::new(db, transcode_status_cache, connection, server_handle_tx);
             server.run().await?;
 
             // remove handle from hashmap
@@ -947,7 +1037,6 @@ struct ServerHandle {
 struct Server {
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
-    trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
 
     connection: Connection,
     handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
@@ -962,7 +1051,6 @@ impl Server {
     fn new(
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
-        trusted_nodes: Arc<Mutex<HashSet<NodeId>>>,
 
         connection: Connection,
         handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
@@ -970,7 +1058,6 @@ impl Server {
         Self {
             db,
             transcode_status_cache,
-            trusted_nodes,
 
             connection,
             handle_tx,
@@ -1046,8 +1133,8 @@ impl Server {
 
         // check if remote node is trusted
         let is_trusted = {
-            let trusted_nodes = self.trusted_nodes.lock().unwrap();
-            trusted_nodes.contains(&remote_node_id)
+            let db = self.db.lock().unwrap();
+            db.is_node_trusted(remote_node_id)?
         };
 
         if is_trusted {

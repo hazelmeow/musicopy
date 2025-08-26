@@ -1,3 +1,12 @@
+//! The model is the serialized state of the application sent to the UI.
+//!
+//! The model should be available immediately (synchronously queryable by the
+//! application during initialization), with updated snapshots pushed to the UI
+//! when data changes. On the Rust side, one model is kept around and mutated,
+//! then serialized in its entirety and sent to the UI. Sending via FFI always
+//! requires serialization, so when possible we should slice the model into
+//! subtrees and send snapshots independently.
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},

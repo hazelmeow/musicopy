@@ -1,6 +1,7 @@
 pub mod transcode;
 
 use crate::{
+    EventHandler,
     database::{Database, InsertFile},
     library::transcode::{TranscodeCommand, TranscodeItem, TranscodePool, TranscodeStatusCache},
     model::CounterModel,
@@ -21,6 +22,7 @@ use symphonia::core::{
     io::MediaSourceStream,
     meta::MetadataOptions,
 };
+use tokio::sync::mpsc;
 use twox_hash::XxHash3_64;
 
 #[derive(Debug, uniffi::Record)]
@@ -52,28 +54,54 @@ pub enum LibraryCommand {
     Stop,
 }
 
+/// The resources needed to run the Library run loop.
+///
+/// This is created by Library::new() and passed linearly to Library::run().
+/// This pattern allows the run loop to own and mutate these resources while
+/// hiding the details from the public API.
+#[derive(Debug)]
+pub struct LibraryRun {
+    command_rx: mpsc::UnboundedReceiver<LibraryCommand>,
+}
+
 pub struct Library {
+    event_handler: Arc<dyn EventHandler>,
     db: Arc<Mutex<Database>>,
     local_node_id: NodeId,
 
     transcode_pool: TranscodePool,
+
+    command_tx: mpsc::UnboundedSender<LibraryCommand>,
+}
+
+// stub debug implementation
+impl std::fmt::Debug for Library {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Library").finish()
+    }
 }
 
 impl Library {
     pub async fn new(
+        event_handler: Arc<dyn EventHandler>,
         db: Arc<Mutex<Database>>,
         local_node_id: NodeId,
         transcodes_dir: PathBuf,
         transcode_status_cache: TranscodeStatusCache,
-    ) -> anyhow::Result<Arc<Self>> {
+    ) -> anyhow::Result<(Arc<Self>, LibraryRun)> {
         // spawn transcode pool task
         let transcode_pool = TranscodePool::spawn(transcodes_dir.clone(), transcode_status_cache);
 
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+
         let library = Arc::new(Self {
+            event_handler,
             db,
             local_node_id,
 
             transcode_pool,
+
+            command_tx,
         });
 
         // send all local files to the transcode pool to be transcoded if needed
@@ -81,16 +109,17 @@ impl Library {
             .check_transcodes()
             .context("failed to check transcodes")?;
 
-        Ok(library)
+        let library_run = LibraryRun { command_rx };
+
+        Ok((library, library_run))
     }
 
-    pub async fn run(
-        self: &Arc<Self>,
-        mut rx: tokio::sync::mpsc::UnboundedReceiver<LibraryCommand>,
-    ) -> anyhow::Result<()> {
+    pub async fn run(self: &Arc<Self>, run_token: LibraryRun) -> anyhow::Result<()> {
+        let LibraryRun { mut command_rx } = run_token;
+
         loop {
             tokio::select! {
-                Some(command) = rx.recv() => {
+                Some(command) = command_rx.recv() => {
                     match command {
                         LibraryCommand::AddRoot { name, path } => {
                             {
@@ -345,6 +374,12 @@ impl Library {
             .send(TranscodeCommand::Add(transcode_add_items))?;
 
         Ok(())
+    }
+
+    pub fn send(self: &Arc<Self>, command: LibraryCommand) -> anyhow::Result<()> {
+        self.command_tx
+            .send(command)
+            .map_err(|e| anyhow::anyhow!("failed to send command: {e:?}"))
     }
 
     pub fn model(&self) -> LibraryModel {
