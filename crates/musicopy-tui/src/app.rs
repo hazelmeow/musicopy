@@ -6,7 +6,7 @@ use anyhow::Context;
 use musicopy::{
     Core, CoreOptions,
     library::LibraryModel,
-    node::{DownloadPartialItemModel, NodeModel},
+    node::{ClientStateModel, DownloadPartialItemModel, NodeModel, ServerStateModel},
 };
 use ratatui::{
     DefaultTerminal,
@@ -275,8 +275,8 @@ impl<'a> App<'a> {
             "a" | "accept" => {
                 app_log!("accepting pending servers");
 
-                for server in &self.node_model.servers {
-                    if !server.accepted {
+                for server in self.node_model.servers.values() {
+                    if matches!(server.state, ServerStateModel::Pending) {
                         app_log!("accepting server: {}", server.node_id);
                         self.core.accept_connection(&server.node_id)?;
                     }
@@ -286,8 +286,8 @@ impl<'a> App<'a> {
             "t" | "trust" => {
                 app_log!("accepting and trusting pending servers");
 
-                for server in &self.node_model.servers {
-                    if !server.accepted {
+                for server in self.node_model.servers.values() {
+                    if matches!(server.state, ServerStateModel::Pending) {
                         app_log!("accepting and trusting server: {}", server.node_id);
                         self.core.accept_connection_and_trust(&server.node_id)?;
                     }
@@ -314,11 +314,11 @@ impl<'a> App<'a> {
             "dc" | "disconnect" => {
                 app_log!("disconnecting everything");
 
-                for client in &self.node_model.clients {
+                for client in self.node_model.clients.values() {
                     self.core.close_client(&client.node_id)?;
                 }
 
-                for server in &self.node_model.servers {
+                for server in self.node_model.servers.values() {
                     self.core.close_server(&server.node_id)?;
                 }
             }
@@ -339,8 +339,8 @@ impl<'a> App<'a> {
                 let node_id = self
                     .node_model
                     .clients
-                    .iter()
-                    .filter(|c| c.accepted)
+                    .values()
+                    .filter(|c| matches!(c.state, ClientStateModel::Accepted))
                     .nth(client_num - 1)
                     .ok_or_else(|| anyhow::anyhow!("client number out of range"))?
                     .node_id
@@ -372,8 +372,8 @@ impl<'a> App<'a> {
                 let client_model = self
                     .node_model
                     .clients
-                    .iter()
-                    .filter(|c| c.accepted)
+                    .values()
+                    .filter(|c| matches!(c.state, ClientStateModel::Accepted))
                     .nth(client_num - 1)
                     .ok_or_else(|| anyhow::anyhow!("client number out of range"))?;
 

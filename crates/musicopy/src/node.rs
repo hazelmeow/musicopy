@@ -32,7 +32,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -43,6 +43,7 @@ use tokio::{
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
+    sync::CancellationToken,
 };
 
 /// Model of progress for a transfer job.
@@ -74,6 +75,14 @@ pub struct TransferJobModel {
     pub progress: TransferJobProgressModel,
 }
 
+/// Model of the state of a server connection.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum ServerStateModel {
+    Pending,
+    Accepted,
+    Closed { error: Option<String> },
+}
+
 /// Model of an incoming connection.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ServerModel {
@@ -81,7 +90,7 @@ pub struct ServerModel {
     pub node_id: String,
     pub connected_at: u64,
 
-    pub accepted: bool,
+    pub state: ServerStateModel,
 
     pub connection_type: String,
     pub latency_ms: Option<u64>,
@@ -110,6 +119,14 @@ pub struct IndexItemModel {
     pub file_size: FileSizeModel,
 }
 
+/// Model of the state of a client connection.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum ClientStateModel {
+    Pending,
+    Accepted,
+    Closed { error: Option<String> },
+}
+
 /// Model of an outgoing connection.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ClientModel {
@@ -117,7 +134,7 @@ pub struct ClientModel {
     pub node_id: String,
     pub connected_at: u64,
 
-    pub accepted: bool,
+    pub state: ClientStateModel,
 
     pub connection_type: String,
     pub latency_ms: Option<u64>,
@@ -151,8 +168,8 @@ pub struct NodeModel {
     pub conn_success: u64,
     pub conn_direct: u64,
 
-    pub servers: Vec<ServerModel>,
-    pub clients: Vec<ClientModel>,
+    pub servers: HashMap<String, ServerModel>,
+    pub clients: HashMap<String, ClientModel>,
 
     pub trusted_nodes: Vec<String>,
     pub recent_servers: Vec<RecentServerModel>,
@@ -166,6 +183,7 @@ pub struct DownloadPartialItemModel {
     pub path: String,
 }
 
+/// A command sent by the UI to the node.
 #[derive(Debug)]
 pub enum NodeCommand {
     SetDownloadDirectory(String),
@@ -195,6 +213,90 @@ pub enum NodeCommand {
     Stop,
 }
 
+/// An event sent from a server or client to the node.
+enum NodeEvent {
+    RecentServersChanged,
+
+    ServerOpened {
+        node_id: NodeId,
+        handle: ServerHandle,
+
+        name: String,
+        connected_at: u64,
+    },
+    ServerChanged {
+        node_id: NodeId,
+        update: ServerModelUpdate,
+    },
+    ServerClosed {
+        node_id: NodeId,
+        error: Option<String>,
+    },
+
+    ClientOpened {
+        node_id: NodeId,
+        handle: ClientHandle,
+
+        name: String,
+        connected_at: u64,
+    },
+    ClientChanged {
+        node_id: NodeId,
+        update: ClientModelUpdate,
+    },
+    ClientClosed {
+        node_id: NodeId,
+        error: Option<String>,
+    },
+}
+
+/// An update to a server model.
+enum ServerModelUpdate {
+    Accept,
+    PollRemoteInfo,
+    UpdateTransferJobs,
+    Close { error: Option<String> },
+}
+
+/// An update to a client model.
+enum ClientModelUpdate {
+    Accept,
+    PollRemoteInfo,
+    UpdateIndex,
+    UpdateTransferJobs,
+    Close { error: Option<String> },
+}
+
+/// An update to the node model.
+enum NodeModelUpdate {
+    PollMetrics,
+    UpdateHomeRelay {
+        home_relay: String,
+    },
+    UpdateTrustedNodes,
+    UpdateRecentServers,
+
+    CreateServer {
+        node_id: NodeId,
+        name: String,
+        connected_at: u64,
+    },
+    UpdateServer {
+        node_id: NodeId,
+        update: ServerModelUpdate,
+    },
+
+    CreateClient {
+        node_id: NodeId,
+        name: String,
+        connected_at: u64,
+    },
+    UpdateClient {
+        node_id: NodeId,
+        update: ClientModelUpdate,
+    },
+}
+
 pub struct Node {
     event_handler: Arc<dyn EventHandler>,
     db: Arc<Mutex<Database>>,
@@ -204,7 +306,7 @@ pub struct Node {
     protocol: Protocol,
 
     command_tx: mpsc::UnboundedSender<NodeCommand>,
-    client_handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+    event_tx: mpsc::UnboundedSender<NodeEvent>,
 
     servers: Mutex<HashMap<NodeId, ServerHandle>>,
     clients: Mutex<HashMap<NodeId, ClientHandle>>,
@@ -229,9 +331,7 @@ impl std::fmt::Debug for Node {
 #[derive(Debug)]
 pub struct NodeRun {
     command_rx: mpsc::UnboundedReceiver<NodeCommand>,
-    server_handle_rx: mpsc::UnboundedReceiver<(NodeId, ServerHandle)>,
-    server_closed_rx: mpsc::UnboundedReceiver<NodeId>,
-    client_handle_rx: mpsc::UnboundedReceiver<(NodeId, ClientHandle)>,
+    event_rx: mpsc::UnboundedReceiver<NodeEvent>,
 }
 
 impl Node {
@@ -242,21 +342,14 @@ impl Node {
         transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<(Arc<Self>, NodeRun)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (server_handle_tx, server_handle_rx) = mpsc::unbounded_channel();
-        let (server_closed_tx, server_closed_rx) = mpsc::unbounded_channel();
-        let (client_handle_tx, client_handle_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         let endpoint = Endpoint::builder()
             .secret_key(secret_key)
             .discovery_n0()
             .bind()
             .await?;
-        let protocol = Protocol::new(
-            db.clone(),
-            transcode_status_cache.clone(),
-            server_handle_tx,
-            server_closed_tx,
-        );
+        let protocol = Protocol::new(db.clone(), transcode_status_cache.clone(), event_tx.clone());
 
         let router = Router::builder(endpoint)
             .accept(Protocol::ALPN, protocol.clone())
@@ -276,8 +369,8 @@ impl Node {
             conn_success: 0,
             conn_direct: 0,
 
-            servers: Vec::new(),
-            clients: Vec::new(),
+            servers: HashMap::new(),
+            clients: HashMap::new(),
 
             trusted_nodes: Default::default(),
             recent_servers: Vec::new(),
@@ -292,7 +385,7 @@ impl Node {
             protocol,
 
             command_tx,
-            client_handle_tx,
+            event_tx,
 
             servers: Mutex::new(HashMap::new()),
             clients: Mutex::new(HashMap::new()),
@@ -303,16 +396,14 @@ impl Node {
         });
 
         // initialize model
-        node.update_model(|model| {
-            node.update_model_metrics(model);
-            node.update_model_trusted_nodes(model);
-        });
+        // TODO: ideally don't push updates here...
+        node.update_model(NodeModelUpdate::PollMetrics);
+        node.update_model(NodeModelUpdate::UpdateTrustedNodes);
+        node.update_model(NodeModelUpdate::UpdateRecentServers);
 
         let node_run = NodeRun {
             command_rx,
-            server_handle_rx,
-            server_closed_rx,
-            client_handle_rx,
+            event_rx,
         };
 
         // spawn metrics polling task
@@ -321,9 +412,7 @@ impl Node {
             async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    node.update_model(|model| {
-                        node.update_model_metrics(model);
-                    });
+                    node.update_model(NodeModelUpdate::PollMetrics);
                 }
             }
         });
@@ -335,33 +424,16 @@ impl Node {
             async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    node.update_model(|model| {
-                        let home_relay = node
-                            .router
-                            .endpoint()
-                            .home_relay()
-                            .get()
-                            .ok()
-                            .flatten()
-                            .map(|url| url.to_string())
-                            .unwrap_or_else(|| "none".to_string());
-
-                        model.home_relay = home_relay;
-                    });
-                }
-            }
-        });
-
-        // TODO: replace with push-based updates
-        // spawn misc polling task
-        tokio::spawn({
-            let node = node.clone();
-            async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    node.update_model(|model| {
-                        node.update_model_todo(model);
-                    });
+                    let home_relay = node
+                        .router
+                        .endpoint()
+                        .home_relay()
+                        .get()
+                        .ok()
+                        .flatten()
+                        .map(|url| url.to_string())
+                        .unwrap_or_else(|| "none".to_string());
+                    node.update_model(NodeModelUpdate::UpdateHomeRelay { home_relay });
                 }
             }
         });
@@ -372,9 +444,7 @@ impl Node {
     pub async fn run(self: &Arc<Self>, run_token: NodeRun) -> anyhow::Result<()> {
         let NodeRun {
             mut command_rx,
-            mut server_handle_rx,
-            mut server_closed_rx,
-            mut client_handle_rx,
+            mut event_rx,
         } = run_token;
 
         loop {
@@ -479,9 +549,7 @@ impl Node {
                             }
 
                             // update model
-                            self.update_model(|model| {
-                                self.update_model_trusted_nodes(model);
-                            });
+                            self.update_model(NodeModelUpdate::UpdateTrustedNodes);
                         }
                         NodeCommand::UntrustNode(node_id) => {
                             // persist to database
@@ -493,28 +561,63 @@ impl Node {
                             }
 
                             // update model
-                            self.update_model(|model| {
-                                self.update_model_trusted_nodes(model);
-                            });
+                            self.update_model(NodeModelUpdate::UpdateTrustedNodes);
                         }
 
                         NodeCommand::Stop => break,
                     }
                 }
 
-                Some((server_id, server_handle)) = server_handle_rx.recv() => {
-                    let mut servers = self.servers.lock().unwrap();
-                    servers.insert(server_id, server_handle);
-                }
+                Some(event) = event_rx.recv() => {
+                    match event {
+                        NodeEvent::RecentServersChanged => {
+                            self.update_model(NodeModelUpdate::UpdateRecentServers);
+                        }
 
-                Some(server_id) = server_closed_rx.recv() => {
-                    let mut servers = self.servers.lock().unwrap();
-                    servers.remove(&server_id);
-                }
+                        NodeEvent::ServerOpened { node_id, handle, name, connected_at } => {
+                            {
+                                let mut servers = self.servers.lock().unwrap();
+                                servers.insert(node_id, handle);
+                            }
 
-                Some((client_id, client_handle)) = client_handle_rx.recv() => {
-                    let mut clients = self.clients.lock().unwrap();
-                    clients.insert(client_id, client_handle);
+                            self.update_model(NodeModelUpdate::CreateServer { node_id, name, connected_at });
+                        }
+
+                        NodeEvent::ServerChanged { node_id, update } => {
+                            self.update_model(NodeModelUpdate::UpdateServer { node_id, update });
+                        }
+
+                        NodeEvent::ServerClosed { node_id, error } => {
+                            {
+                                let mut servers = self.servers.lock().unwrap();
+                                servers.remove(&node_id);
+                            }
+
+                            self.update_model(NodeModelUpdate::UpdateServer { node_id, update: ServerModelUpdate::Close { error } });
+                        }
+
+                        NodeEvent::ClientOpened { node_id, handle, name, connected_at } => {
+                            {
+                                let mut clients = self.clients.lock().unwrap();
+                                clients.insert(node_id, handle);
+                            }
+
+                            self.update_model(NodeModelUpdate::CreateClient { node_id, name, connected_at });
+                        }
+
+                        NodeEvent::ClientChanged { node_id, update } => {
+                            self.update_model(NodeModelUpdate::UpdateClient { node_id, update });
+                        }
+
+                        NodeEvent::ClientClosed { node_id, error } => {
+                            {
+                                let mut clients = self.clients.lock().unwrap();
+                                clients.remove(&node_id);
+                            }
+
+                            self.update_model(NodeModelUpdate::UpdateClient { node_id, update: ClientModelUpdate::Close { error } });
+                        }
+                    }
                 }
 
                 else => {
@@ -534,59 +637,143 @@ impl Node {
         model.clone()
     }
 
-    fn update_model(self: &Arc<Self>, update: impl FnOnce(&mut NodeModel)) {
-        let mut model = self.model.lock().unwrap();
-        update(&mut model);
-        self.event_handler.on_node_model_snapshot(model.clone());
-    }
+    // TODO: throttle pushing updates
+    fn update_model(self: &Arc<Self>, update: NodeModelUpdate) {
+        match update {
+            NodeModelUpdate::PollMetrics => {
+                let metrics = self.router.endpoint().metrics();
 
-    fn update_model_metrics(&self, model: &mut NodeModel) {
-        let metrics = self.router.endpoint().metrics();
-        model.send_ipv4 = metrics.magicsock.send_ipv4.get();
-        model.send_ipv6 = metrics.magicsock.send_ipv6.get();
-        model.send_relay = metrics.magicsock.send_relay.get();
-        model.recv_ipv4 = metrics.magicsock.recv_data_ipv4.get();
-        model.recv_ipv6 = metrics.magicsock.recv_data_ipv6.get();
-        model.recv_relay = metrics.magicsock.recv_data_relay.get();
-        model.conn_success = metrics.magicsock.connection_handshake_success.get();
-        model.conn_direct = metrics.magicsock.connection_became_direct.get();
-    }
+                let mut model = self.model.lock().unwrap();
+                model.send_ipv4 = metrics.magicsock.send_ipv4.get();
+                model.send_ipv6 = metrics.magicsock.send_ipv6.get();
+                model.send_relay = metrics.magicsock.send_relay.get();
+                model.recv_ipv4 = metrics.magicsock.recv_data_ipv4.get();
+                model.recv_ipv6 = metrics.magicsock.recv_data_ipv6.get();
+                model.recv_relay = metrics.magicsock.recv_data_relay.get();
+                model.conn_success = metrics.magicsock.connection_handshake_success.get();
+                model.conn_direct = metrics.magicsock.connection_became_direct.get();
 
-    fn update_model_trusted_nodes(&self, model: &mut NodeModel) {
-        let db = self.db.lock().unwrap();
-        let trusted_nodes = db.get_trusted_nodes();
-        match trusted_nodes {
-            Ok(trusted_nodes) => {
-                model.trusted_nodes = trusted_nodes
-                    .iter()
-                    .map(|node_id| node_id.to_string())
-                    .collect();
+                self.event_handler.on_node_model_snapshot(model.clone());
             }
-            Err(e) => {
-                error!("failed update node model trusted nodes from database: {e:#}");
+
+            NodeModelUpdate::UpdateHomeRelay { home_relay } => {
+                let mut model = self.model.lock().unwrap();
+                model.home_relay = home_relay;
+
+                self.event_handler.on_node_model_snapshot(model.clone());
             }
-        }
-    }
 
-    fn update_model_todo(&self, model: &mut NodeModel) {
-        let servers = {
-            let servers = self.servers.lock().unwrap();
-            let mut servers = servers
-                .iter()
-                .map(|(node_id, server_handle)| {
-                    let accepted = server_handle.accepted.load(Ordering::Relaxed);
+            NodeModelUpdate::UpdateTrustedNodes => {
+                let trusted_nodes = {
+                    let db = self.db.lock().unwrap();
+                    let trusted_nodes = match db.get_trusted_nodes() {
+                        Ok(trusted_nodes) => trusted_nodes,
+                        Err(e) => {
+                            error!("failed update node model trusted nodes from database: {e:#}");
+                            return;
+                        }
+                    };
+                    trusted_nodes
+                        .iter()
+                        .map(|node_id| node_id.to_string())
+                        .collect()
+                };
 
-                    let remote_info = self.router.endpoint().remote_info(*node_id);
-                    let connection_type = remote_info
-                        .as_ref()
-                        .map(|info| info.conn_type.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let latency_ms = remote_info
-                        .and_then(|info| info.latency)
-                        .map(|latency| latency.as_millis() as u64);
+                let mut model = self.model.lock().unwrap();
+                model.trusted_nodes = trusted_nodes;
 
-                    let transfer_jobs = {
-                        server_handle
+                self.event_handler.on_node_model_snapshot(model.clone());
+            }
+
+            NodeModelUpdate::UpdateRecentServers => {
+                let recent_servers = {
+                    let db = self.db.lock().unwrap();
+                    match db.get_recent_servers() {
+                        Ok(recent_servers) => recent_servers
+                            .into_iter()
+                            .map(|node| RecentServerModel {
+                                node_id: node.node_id.to_string(),
+                                connected_at: node.connected_at,
+                            })
+                            .collect(),
+                        Err(e) => {
+                            log::error!("failed to get recent servers from database: {e:#}");
+                            Vec::new()
+                        }
+                    }
+                };
+
+                let mut model = self.model.lock().unwrap();
+                model.recent_servers = recent_servers;
+
+                self.event_handler.on_node_model_snapshot(model.clone());
+            }
+
+            NodeModelUpdate::CreateServer {
+                node_id,
+                name,
+                connected_at,
+            } => {
+                let node_id = node_id.to_string();
+
+                let mut model = self.model.lock().unwrap();
+                model.servers.insert(
+                    node_id.clone(),
+                    ServerModel {
+                        name,
+                        node_id,
+                        connected_at,
+
+                        state: ServerStateModel::Pending,
+
+                        connection_type: "unknown".to_string(),
+                        latency_ms: None,
+
+                        transfer_jobs: Vec::new(),
+                    },
+                );
+
+                self.event_handler.on_node_model_snapshot(model.clone());
+            }
+
+            NodeModelUpdate::UpdateServer { node_id, update } => {
+                let node_id_string = node_id.to_string();
+
+                let mut model = self.model.lock().unwrap();
+                let Some(server) = model.servers.get_mut(&node_id_string) else {
+                    log::warn!(
+                        "failed to apply NodeModelUpdate::UpdateServer: no server model found"
+                    );
+                    return;
+                };
+
+                match update {
+                    ServerModelUpdate::Accept => {
+                        server.state = ServerStateModel::Accepted;
+                    }
+                    ServerModelUpdate::PollRemoteInfo => {
+                        let remote_info = self.router.endpoint().remote_info(node_id);
+                        let connection_type = remote_info
+                            .as_ref()
+                            .map(|info| info.conn_type.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let latency_ms = remote_info
+                            .and_then(|info| info.latency)
+                            .map(|latency| latency.as_millis() as u64);
+
+                        server.connection_type = connection_type;
+                        server.latency_ms = latency_ms;
+                    }
+                    ServerModelUpdate::UpdateTransferJobs => {
+                        let server_handles = self.servers.lock().unwrap();
+                        let Some(server_handle) = server_handles.get(&node_id) else {
+                            log::warn!(
+                                "failed to apply ServerModelUpdate::UpdateTransferJobs: no server handle found"
+                            );
+                            return;
+                        };
+
+                        let transfer_jobs = server_handle
                             .jobs
                             .iter()
                             .map(|entry| {
@@ -639,46 +826,85 @@ impl Node {
                                     progress,
                                 }
                             })
-                            .collect()
-                    };
+                            .collect();
 
-                    ServerModel {
-                        name: "unknown".to_string(), // TODO: get real name
-                        node_id: node_id.to_string(),
-                        connected_at: server_handle.connected_at,
-
-                        accepted,
-
-                        connection_type,
-                        latency_ms,
-
-                        transfer_jobs,
+                        server.transfer_jobs = transfer_jobs;
                     }
-                })
-                .collect::<Vec<_>>();
-            servers.sort_by_key(|c| c.connected_at);
-            servers
-        };
+                    ServerModelUpdate::Close { error } => {
+                        server.state = ServerStateModel::Closed { error };
+                    }
+                }
 
-        let clients = {
-            let clients = self.clients.lock().unwrap();
-            let mut clients = clients
-                .iter()
-                .map(|(node_id, client_handle)| {
-                    let accepted = client_handle.accepted.load(Ordering::Relaxed);
+                self.event_handler.on_node_model_snapshot(model.clone());
+            }
 
-                    let remote_info = self.router.endpoint().remote_info(*node_id);
-                    let connection_type = remote_info
-                        .as_ref()
-                        .map(|info| info.conn_type.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let latency_ms = remote_info
-                        .and_then(|info| info.latency)
-                        .map(|latency| latency.as_millis() as u64);
+            NodeModelUpdate::CreateClient {
+                node_id,
+                name,
+                connected_at,
+            } => {
+                let node_id = node_id.to_string();
 
-                    let index = if accepted {
+                let mut model = self.model.lock().unwrap();
+                model.clients.insert(
+                    node_id.clone(),
+                    ClientModel {
+                        name,
+                        node_id,
+                        connected_at,
+
+                        state: ClientStateModel::Pending,
+
+                        connection_type: "unknown".to_string(),
+                        latency_ms: None,
+
+                        index: None,
+                        transfer_jobs: Vec::new(),
+                    },
+                );
+
+                self.event_handler.on_node_model_snapshot(model.clone());
+            }
+
+            NodeModelUpdate::UpdateClient { node_id, update } => {
+                let node_id_string = node_id.to_string();
+
+                let mut model = self.model.lock().unwrap();
+                let Some(client) = model.clients.get_mut(&node_id_string) else {
+                    log::warn!(
+                        "failed to apply NodeModelUpdate::UpdateClient: no client model found"
+                    );
+                    return;
+                };
+
+                match update {
+                    ClientModelUpdate::Accept => {
+                        client.state = ClientStateModel::Accepted;
+                    }
+                    ClientModelUpdate::PollRemoteInfo => {
+                        let remote_info = self.router.endpoint().remote_info(node_id);
+                        let connection_type = remote_info
+                            .as_ref()
+                            .map(|info| info.conn_type.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let latency_ms = remote_info
+                            .and_then(|info| info.latency)
+                            .map(|latency| latency.as_millis() as u64);
+
+                        client.connection_type = connection_type;
+                        client.latency_ms = latency_ms;
+                    }
+                    ClientModelUpdate::UpdateIndex => {
+                        let client_handles = self.clients.lock().unwrap();
+                        let Some(client_handle) = client_handles.get(&node_id) else {
+                            log::warn!(
+                                "failed to apply ClientModelUpdate::UpdateIndex: no client handle found"
+                            );
+                            return;
+                        };
+
                         let index = client_handle.index.lock().unwrap();
-                        index.as_ref().map(|index| {
+                        let index = index.as_ref().map(|index| {
                             index
                                 .iter()
                                 .map(|item| IndexItemModel {
@@ -696,13 +922,24 @@ impl Node {
                                     },
                                 })
                                 .collect()
-                        })
-                    } else {
-                        None
-                    };
+                        });
 
-                    let transfer_jobs = {
-                        client_handle
+                        if index.is_none() {
+                            log::warn!("ClientModelUpdate::UpdateIndex: no index found");
+                        }
+
+                        client.index = index;
+                    }
+                    ClientModelUpdate::UpdateTransferJobs => {
+                        let client_handles = self.clients.lock().unwrap();
+                        let Some(client_handle) = client_handles.get(&node_id) else {
+                            log::warn!(
+                                "failed to apply ClientModelUpdate::UpdateTransferJobs: no client handle found"
+                            );
+                            return;
+                        };
+
+                        let transfer_jobs = client_handle
                             .jobs
                             .iter()
                             .map(|entry| {
@@ -759,49 +996,18 @@ impl Node {
                                     progress,
                                 }
                             })
-                            .collect()
-                    };
+                            .collect();
 
-                    ClientModel {
-                        name: "unknown".to_string(), // TODO: get real name
-                        node_id: node_id.to_string(),
-                        connected_at: client_handle.connected_at,
-
-                        accepted,
-
-                        connection_type,
-                        latency_ms,
-
-                        index,
-                        transfer_jobs,
+                        client.transfer_jobs = transfer_jobs;
                     }
-                })
-                .collect::<Vec<_>>();
-            clients.sort_by_key(|c| c.connected_at);
-            clients
-        };
-
-        let recent_servers = {
-            let db = self.db.lock().unwrap();
-            match db.get_recent_servers() {
-                Ok(recent_servers) => recent_servers
-                    .into_iter()
-                    .map(|node| RecentServerModel {
-                        node_id: node.node_id.to_string(),
-                        connected_at: node.connected_at,
-                    })
-                    .collect(),
-                Err(e) => {
-                    log::error!("failed to get recent servers from database: {e:#}");
-                    Vec::new()
+                    ClientModelUpdate::Close { error } => {
+                        client.state = ClientStateModel::Closed { error };
+                    }
                 }
+
+                self.event_handler.on_node_model_snapshot(model.clone());
             }
-        };
-
-        model.servers = servers;
-        model.clients = clients;
-
-        model.recent_servers = recent_servers;
+        }
     }
 
     // TODO: maybe replace with methods?
@@ -819,21 +1025,23 @@ impl Node {
         log::info!("opened connection to {node_id}");
 
         let db = self.db.clone();
-        let client_handle_tx = self.client_handle_tx.clone();
-        let node = self.clone();
+        let event_tx = self.event_tx.clone();
         let download_directory = self.download_directory.clone();
         tokio::spawn(async move {
-            let client = Client::new(db, client_handle_tx, connection, download_directory);
+            let client = Client::new(db, event_tx.clone(), connection, download_directory);
 
-            if let Err(e) = client.run().await {
+            let res = client.run().await;
+            if let Err(e) = &res {
                 log::error!("error during client.run(): {e:#}");
             }
 
-            // remove handle from hashmap
-            {
-                let mut clients = node.clients.lock().unwrap();
-                clients.remove(&node_id);
-            }
+            // notify node
+            event_tx
+                .send(NodeEvent::ClientClosed {
+                    node_id,
+                    error: res.err().map(|e| format!("{e:#}")),
+                })
+                .expect("failed to send NodeEvent::ClientClosed");
         });
 
         Ok(())
@@ -845,8 +1053,7 @@ struct Protocol {
     db: Arc<Mutex<Database>>,
     transcode_status_cache: TranscodeStatusCache,
 
-    server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
-    server_closed_tx: mpsc::UnboundedSender<NodeId>,
+    event_tx: mpsc::UnboundedSender<NodeEvent>,
 }
 
 impl Protocol {
@@ -856,15 +1063,13 @@ impl Protocol {
         db: Arc<Mutex<Database>>,
         transcode_status_cache: TranscodeStatusCache,
 
-        server_handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
-        server_closed_tx: mpsc::UnboundedSender<NodeId>,
+        event_tx: mpsc::UnboundedSender<NodeEvent>,
     ) -> Self {
         Self {
             db,
             transcode_status_cache,
 
-            server_handle_tx,
-            server_closed_tx,
+            event_tx,
         }
     }
 }
@@ -873,21 +1078,25 @@ impl ProtocolHandler for Protocol {
     fn accept(&self, connection: iroh::endpoint::Connection) -> Boxed<anyhow::Result<()>> {
         let db = self.db.clone();
         let transcode_status_cache = self.transcode_status_cache.clone();
-
-        let server_handle_tx = self.server_handle_tx.clone();
-        let server_closed_tx = self.server_closed_tx.clone();
-
+        let event_tx = self.event_tx.clone();
         Box::pin(async move {
             let node_id = connection.remote_node_id()?;
             log::info!("accepted connection from {node_id}");
 
-            let server = Server::new(db, transcode_status_cache, connection, server_handle_tx);
-            server.run().await?;
+            let server = Server::new(db, transcode_status_cache, connection, event_tx.clone());
 
-            // remove handle from hashmap
-            server_closed_tx
-                .send(node_id)
-                .expect("failed to send server closed notification");
+            let res = server.run().await;
+            if let Err(e) = &res {
+                log::error!("error during server.run(): {e:#}");
+            }
+
+            // notify node
+            event_tx
+                .send(NodeEvent::ServerClosed {
+                    node_id,
+                    error: res.err().map(|e| format!("{e:#}")),
+                })
+                .expect("failed to send NodeEvent::ServerClosed");
 
             Ok(())
         })
@@ -1028,9 +1237,6 @@ enum ServerCommand {
 struct ServerHandle {
     tx: mpsc::UnboundedSender<ServerCommand>,
 
-    connected_at: u64,
-
-    accepted: Arc<AtomicBool>,
     jobs: Arc<DashMap<u64, ServerTransferJob>>,
 }
 
@@ -1039,11 +1245,10 @@ struct Server {
     transcode_status_cache: TranscodeStatusCache,
 
     connection: Connection,
-    handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+    event_tx: mpsc::UnboundedSender<NodeEvent>,
 
     connected_at: u64,
 
-    accepted: Arc<AtomicBool>,
     jobs: Arc<DashMap<u64, ServerTransferJob>>,
 }
 
@@ -1053,24 +1258,49 @@ impl Server {
         transcode_status_cache: TranscodeStatusCache,
 
         connection: Connection,
-        handle_tx: mpsc::UnboundedSender<(NodeId, ServerHandle)>,
+        event_tx: mpsc::UnboundedSender<NodeEvent>,
     ) -> Self {
         Self {
             db,
             transcode_status_cache,
 
             connection,
-            handle_tx,
+            event_tx,
 
             connected_at: unix_epoch_now_secs(),
 
-            accepted: Arc::new(AtomicBool::new(false)),
             jobs: Arc::new(DashMap::new()),
         }
     }
 
     async fn run(self) -> anyhow::Result<()> {
         let remote_node_id = self.connection.remote_node_id()?;
+
+        // spawn remote info polling task
+        let cancel_token = CancellationToken::new();
+        let _cancel_guard = cancel_token.clone().drop_guard();
+        tokio::spawn({
+            let event_tx = self.event_tx.clone();
+            async move {
+                loop {
+                    event_tx
+                        .send(NodeEvent::ServerChanged {
+                            node_id: remote_node_id,
+                            update: ServerModelUpdate::PollRemoteInfo,
+                        })
+                        .expect("failed to send ServerModelUpdate::PollRemoteInfo");
+
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+
+                    if cancel_token.is_cancelled() {
+                        log::debug!(
+                            "remote info polling task cancelled for server {remote_node_id}"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
 
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -1117,19 +1347,20 @@ impl Server {
             .expect("failed to send Identify message");
 
         // handshake finished, send handle to Node
-        self.handle_tx
-            .send((
-                remote_node_id,
-                ServerHandle {
-                    tx: tx.clone(),
+        let handle = ServerHandle {
+            tx: tx.clone(),
 
-                    connected_at: self.connected_at,
+            jobs: self.jobs.clone(),
+        };
+        self.event_tx
+            .send(NodeEvent::ServerOpened {
+                node_id: remote_node_id,
+                handle,
 
-                    accepted: self.accepted.clone(),
-                    jobs: self.jobs.clone(),
-                },
-            ))
-            .expect("failed to send server handle");
+                name: "unknown".to_string(), // TODO: real name
+                connected_at: self.connected_at,
+            })
+            .expect("failed to send NodeEvent::ServerOpened");
 
         // check if remote node is trusted
         let is_trusted = {
@@ -1187,7 +1418,12 @@ impl Server {
         }
 
         // mark as accepted
-        self.accepted.store(true, Ordering::Relaxed);
+        self.event_tx
+            .send(NodeEvent::ServerChanged {
+                node_id: remote_node_id,
+                update: ServerModelUpdate::Accept,
+            })
+            .expect("failed to send ServerModelUpdate::Accept");
 
         // send Accepted message
         send.send(ServerMessage::Accepted)
@@ -1206,6 +1442,7 @@ impl Server {
         tokio::spawn({
             let jobs = self.jobs.clone();
             let transcode_status_cache = self.transcode_status_cache.clone();
+            let event_tx = self.event_tx.clone();
             async move {
                 loop {
                     let mut ready_jobs = Vec::new();
@@ -1296,6 +1533,14 @@ impl Server {
                         )) {
                             log::warn!("transcode watcher failed to send JobStatus message: {e}");
                         }
+
+                        // update model
+                        event_tx
+                            .send(NodeEvent::ServerChanged {
+                                node_id: remote_node_id,
+                                update: ServerModelUpdate::UpdateTransferJobs,
+                            })
+                            .expect("failed to send ServerModelUpdate::UpdateTransferJobs");
                     }
 
                     // sleep before checking again
@@ -1434,9 +1679,16 @@ impl Server {
                                         }
                                     }).collect::<HashMap<_, _>>();
 
+                                    // send job status to client
                                     send.send(ServerMessage::JobStatus(status_changes))
                                         .await
                                         .expect("failed to send JobStatus message");
+
+                                    // update model
+                                    self.event_tx.send(NodeEvent::ServerChanged {
+                                        node_id: remote_node_id,
+                                        update: ServerModelUpdate::UpdateTransferJobs,
+                                    }).expect("failed to send ServerModelUpdate::UpdateTransferJobs");
                                 }
                             }
                         },
@@ -1455,6 +1707,7 @@ impl Server {
                     match accept_result {
                         Ok((mut send, mut recv)) => {
                             let jobs = self.jobs.clone();
+                            let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
                                 // receive transfer request with job id
                                 let transfer_req_len = recv.read_u32().await?;
@@ -1515,6 +1768,12 @@ impl Server {
                                     job
                                 });
 
+                                // update model
+                                event_tx.send(NodeEvent::ServerChanged {
+                                    node_id: remote_node_id,
+                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                }).expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+
                                 // read file to buffer
                                 // TODO: stream instead of reading into memory?
                                 let file_content = tokio::fs::read(local_path).await?;
@@ -1528,6 +1787,12 @@ impl Server {
                                     job.progress = ServerTransferJobProgress::Finished { finished_at: unix_epoch_now_secs(), file_size };
                                     job
                                 });
+
+                                // update model
+                                event_tx.send(NodeEvent::ServerChanged {
+                                    node_id: remote_node_id,
+                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                }).expect("failed to send ServerModelUpdate::UpdateTransferJobs");
 
                                 Ok::<(), anyhow::Error>(())
                             });
@@ -1674,9 +1939,6 @@ enum ClientCommand {
 struct ClientHandle {
     tx: mpsc::UnboundedSender<ClientCommand>,
 
-    connected_at: u64,
-
-    accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
     jobs: Arc<DashMap<u64, ClientTransferJob>>,
 }
@@ -1684,7 +1946,7 @@ struct ClientHandle {
 struct Client {
     db: Arc<Mutex<Database>>,
 
-    handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+    event_tx: mpsc::UnboundedSender<NodeEvent>,
     connection: Connection,
 
     connected_at: u64,
@@ -1692,7 +1954,6 @@ struct Client {
     next_job_id: Arc<AtomicU64>,
     ready_tx: mpsc::UnboundedSender<u64>,
 
-    accepted: Arc<AtomicBool>,
     index: Arc<Mutex<Option<Vec<IndexItem>>>>,
     jobs: Arc<DashMap<u64, ClientTransferJob>>,
 }
@@ -1700,7 +1961,7 @@ struct Client {
 impl Client {
     fn new(
         db: Arc<Mutex<Database>>,
-        handle_tx: mpsc::UnboundedSender<(NodeId, ClientHandle)>,
+        event_tx: mpsc::UnboundedSender<NodeEvent>,
         connection: Connection,
         download_directory: Arc<Mutex<Option<String>>>,
     ) -> Self {
@@ -1711,6 +1972,7 @@ impl Client {
         let (ready_tx, mut ready_rx) = mpsc::unbounded_channel::<u64>();
         tokio::spawn({
             let jobs = jobs.clone();
+            let event_tx = event_tx.clone();
             let connection = connection.clone();
             async move {
                 // convert channel receiver of ready job IDs into a stream for use with buffer_unordered
@@ -1730,8 +1992,11 @@ impl Client {
                         };
 
                         let jobs = jobs.clone();
+                        let event_tx = event_tx.clone();
                         let connection = connection.clone();
                         async move {
+                            let remote_node_id = connection.remote_node_id()?;
+
                             // check if download directory is set
                             // we need to do this inside the async block so that the return type of the closure is always the async block's anonymous future
                             let Some(download_directory) = download_directory else {
@@ -1751,7 +2016,7 @@ impl Client {
                                 )
                             };
 
-                            log::debug!("downloading file: {}/{}", file_root, file_path);
+                            log::debug!("downloading file: {file_root}/{file_path}");
 
                             // open a bidirectional stream
                             let (mut send, mut recv) = connection.open_bi().await?;
@@ -1803,6 +2068,14 @@ impl Client {
                                 job
                             });
 
+                            // update model
+                            event_tx
+                                .send(NodeEvent::ServerChanged {
+                                    node_id: remote_node_id,
+                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                })
+                                .expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+
                             // build file path
                             let local_path = {
                                 let root_dir_name =
@@ -1842,6 +2115,14 @@ impl Client {
                                 job
                             });
 
+                            // update model
+                            event_tx
+                                .send(NodeEvent::ServerChanged {
+                                    node_id: remote_node_id,
+                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                })
+                                .expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+
                             log::debug!("saved file to {local_path:?}");
 
                             Ok::<(), anyhow::Error>(())
@@ -1863,7 +2144,7 @@ impl Client {
         Self {
             db,
 
-            handle_tx,
+            event_tx,
             connection,
 
             connected_at: unix_epoch_now_secs(),
@@ -1871,7 +2152,6 @@ impl Client {
             next_job_id: Arc::new(AtomicU64::new(0)),
             ready_tx,
 
-            accepted: Arc::new(AtomicBool::new(false)),
             index: Arc::new(Mutex::new(None)),
             jobs,
         }
@@ -1879,6 +2159,32 @@ impl Client {
 
     async fn run(self) -> anyhow::Result<()> {
         let remote_node_id = self.connection.remote_node_id()?;
+
+        // spawn remote info polling task
+        let cancel_token = CancellationToken::new();
+        let _cancel_guard = cancel_token.clone().drop_guard();
+        tokio::spawn({
+            let event_tx = self.event_tx.clone();
+            async move {
+                loop {
+                    event_tx
+                        .send(NodeEvent::ClientChanged {
+                            node_id: remote_node_id,
+                            update: ClientModelUpdate::PollRemoteInfo,
+                        })
+                        .expect("failed to send ClientModelUpdate::PollRemoteInfo");
+
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+
+                    if cancel_token.is_cancelled() {
+                        log::debug!(
+                            "remote info polling task cancelled for client {remote_node_id}"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
 
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -1926,20 +2232,21 @@ impl Client {
         }
 
         // handshake finished, send handle to Node
-        self.handle_tx
-            .send((
-                remote_node_id,
-                ClientHandle {
-                    tx,
+        let handle = ClientHandle {
+            tx,
 
-                    connected_at: self.connected_at,
+            index: self.index.clone(),
+            jobs: self.jobs.clone(),
+        };
+        self.event_tx
+            .send(NodeEvent::ClientOpened {
+                node_id: remote_node_id,
+                handle,
 
-                    accepted: self.accepted.clone(),
-                    index: self.index.clone(),
-                    jobs: self.jobs.clone(),
-                },
-            ))
-            .expect("failed to send server handle");
+                name: "unknown".to_string(), // TODO: real name
+                connected_at: self.connected_at,
+            })
+            .expect("failed to send NodeEvent::ClientOpened");
 
         // waiting loop, wait for server Accepted
         loop {
@@ -1990,7 +2297,12 @@ impl Client {
         }
 
         // mark as accepted
-        self.accepted.store(true, Ordering::Relaxed);
+        self.event_tx
+            .send(NodeEvent::ClientChanged {
+                node_id: remote_node_id,
+                update: ClientModelUpdate::Accept,
+            })
+            .expect("failed to send ClientModelUpdate::Accept");
 
         // update recent servers in database
         {
@@ -1998,6 +2310,9 @@ impl Client {
             db.update_recent_server(remote_node_id, self.connected_at)
                 .context("failed to update recent server in database")?;
         }
+        self.event_tx
+            .send(NodeEvent::RecentServersChanged)
+            .expect("failed to send NodeEvent::RecentServersChanged");
 
         // main loop
         loop {
@@ -2043,6 +2358,12 @@ impl Client {
                             send.send(ClientMessage::Download(download_requests))
                                 .await
                                 .expect("failed to send Download message");
+
+                            // update model
+                            self.event_tx.send(NodeEvent::ClientChanged {
+                                node_id: remote_node_id,
+                                update: ClientModelUpdate::UpdateTransferJobs,
+                            }).expect("failed to send ClientModelUpdate::UpdateTransferJobs");
                         }
                         ClientCommand::DownloadPartial { items } => {
                             // create jobs and download request items
@@ -2074,6 +2395,12 @@ impl Client {
                             send.send(ClientMessage::Download(download_requests))
                                 .await
                                 .expect("failed to send Download message");
+
+                            // update model
+                            self.event_tx.send(NodeEvent::ClientChanged {
+                                node_id: remote_node_id,
+                                update: ClientModelUpdate::UpdateTransferJobs,
+                            }).expect("failed to send ClientModelUpdate::UpdateTransferJobs");
                         }
                     }
                 }
@@ -2088,6 +2415,12 @@ impl Client {
                                         let mut index = self.index.lock().unwrap();
                                         *index = Some(new_index);
                                     }
+
+                                    // update model
+                                    self.event_tx.send(NodeEvent::ClientChanged {
+                                        node_id: remote_node_id,
+                                        update: ClientModelUpdate::UpdateIndex,
+                                    }).expect("failed to send ClientModelUpdate::UpdateIndex");
                                 }
 
                                 ServerMessage::IndexUpdate(updates) => {
@@ -2111,6 +2444,12 @@ impl Client {
                                             log::warn!("received index update but index is None, ignoring");
                                         }
                                     }
+
+                                    // update model
+                                    self.event_tx.send(NodeEvent::ClientChanged {
+                                        node_id: remote_node_id,
+                                        update: ClientModelUpdate::UpdateIndex,
+                                    }).expect("failed to send ClientModelUpdate::UpdateIndex");
                                 }
 
                                 ServerMessage::JobStatus(status_changes) => {
@@ -2142,6 +2481,12 @@ impl Client {
                                             },
                                         }
                                     }
+
+                                    // update model
+                                    self.event_tx.send(NodeEvent::ClientChanged {
+                                        node_id: remote_node_id,
+                                        update: ClientModelUpdate::UpdateTransferJobs,
+                                    }).expect("failed to send ClientModelUpdate::UpdateTransferJobs");
                                 }
 
                                 _ => {

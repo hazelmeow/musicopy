@@ -3,7 +3,7 @@
 pub mod log;
 
 use crate::app::{App, AppMode, AppScreen};
-use musicopy::node::TransferJobProgressModel;
+use musicopy::node::{ClientStateModel, ServerStateModel, TransferJobProgressModel};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -143,34 +143,62 @@ impl<'a> App<'a> {
         let active_servers = self
             .node_model
             .servers
-            .iter()
-            .filter(|s| s.accepted)
+            .values()
+            .filter(|s| matches!(s.state, ServerStateModel::Accepted))
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
         let pending_servers = self
             .node_model
             .servers
-            .iter()
-            .filter(|s| !s.accepted)
+            .values()
+            .filter(|s| matches!(s.state, ServerStateModel::Pending))
             .map(|s| shorten_id(&s.node_id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let closed_servers = self
+            .node_model
+            .servers
+            .values()
+            .filter_map(|s| match &s.state {
+                ServerStateModel::Closed { error } => Some(format!(
+                    "{} ({})",
+                    shorten_id(&s.node_id),
+                    error.as_deref().unwrap_or("no error")
+                )),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join(", ");
 
         let active_clients = self
             .node_model
             .clients
-            .iter()
-            .filter(|c| c.accepted)
+            .values()
+            .filter(|c| matches!(c.state, ClientStateModel::Accepted))
             .map(|s| shorten_id(&s.node_id))
             .collect::<Vec<_>>()
             .join(", ");
         let pending_clients = self
             .node_model
             .clients
-            .iter()
-            .filter(|c| !c.accepted)
+            .values()
+            .filter(|c| matches!(c.state, ClientStateModel::Pending))
             .map(|s| shorten_id(&s.node_id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let closed_clients = self
+            .node_model
+            .clients
+            .values()
+            .filter_map(|c| match &c.state {
+                ClientStateModel::Closed { error } => Some(format!(
+                    "{} ({})",
+                    shorten_id(&c.node_id),
+                    error.as_deref().unwrap_or("no error")
+                )),
+                _ => None,
+            })
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -190,9 +218,11 @@ impl<'a> App<'a> {
             Line::from(""),
             Line::from(vec!["Pending Servers: ".into(), pending_servers.yellow()]),
             Line::from(vec!["Active Servers: ".into(), active_servers.yellow()]),
+            Line::from(vec!["Closed Servers: ".into(), closed_servers.yellow()]),
             Line::from(""),
             Line::from(vec!["Pending Clients: ".into(), pending_clients.yellow()]),
             Line::from(vec!["Active Clients: ".into(), active_clients.yellow()]),
+            Line::from(vec!["Closed Clients: ".into(), closed_clients.yellow()]),
             Line::from(""),
             Line::from("Library".bold()),
         ];
@@ -258,7 +288,7 @@ impl<'a> App<'a> {
         let server_jobs = self
             .node_model
             .servers
-            .iter()
+            .values()
             .flat_map(|server| {
                 if server.transfer_jobs.is_empty() {
                     return vec![];
@@ -354,7 +384,7 @@ impl<'a> App<'a> {
         let client_jobs = self
             .node_model
             .clients
-            .iter()
+            .values()
             .flat_map(|client| {
                 if client.transfer_jobs.is_empty() {
                     return vec![];
