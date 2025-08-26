@@ -72,6 +72,7 @@ kotlin {
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.core.splashscreen)
 
             // QR scanner
             implementation("com.google.android.gms:play-services-code-scanner:16.1.0")

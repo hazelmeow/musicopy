@@ -11,49 +11,47 @@ import app.musicopy.mockTransferJobProgressModelReady
 import app.musicopy.mockTransferJobProgressModelTranscoding
 import app.musicopy.ui.DesktopHome
 import uniffi.musicopy.LibraryRootModel
-import uniffi.musicopy.Model
 
 @Composable
 fun DesktopHomeScreenshot() {
-    val model = Model(
-        node = mockNodeModel(
-            nodeId = "ec3d55519d7486a99d326774e2831335a75ce2810156cddc279311ef670e0e21",
-            servers = listOf(
-                mockServerModel(
-                    transferJobs = buildList {
-                        repeat(7) {
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelTranscoding()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelReady()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelInProgress()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                            add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
-                        }
+    val nodeModel = mockNodeModel(
+        nodeId = "ec3d55519d7486a99d326774e2831335a75ce2810156cddc279311ef670e0e21",
+        servers = listOf(
+            mockServerModel(
+                transferJobs = buildList {
+                    repeat(7) {
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelTranscoding()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelReady()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelInProgress()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
+                        add(mockTransferJobModel(progress = mockTransferJobProgressModelFinished()))
                     }
-                )
+                }
             )
-        ),
-        library = mockLibraryModel(
-            localRoots = listOf(
-                LibraryRootModel(
-                    name = "Favorites",
-                    path = "~/music/fav2025",
-                    numFiles = 83u
-                ),
-                LibraryRootModel(
-                    name = "Backlog",
-                    path = "~/music/backlog",
-                    numFiles = 427u
-                ),
-            ),
-            transcoding = true,
         )
+    )
+    val libraryModel = mockLibraryModel(
+        localRoots = listOf(
+            LibraryRootModel(
+                name = "Favorites",
+                path = "~/music/fav2025",
+                numFiles = 83u
+            ),
+            LibraryRootModel(
+                name = "Backlog",
+                path = "~/music/backlog",
+                numFiles = 427u
+            ),
+        ),
+        transcoding = true,
     )
 
     DesktopHome(
-        model = model,
+        libraryModel = libraryModel,
+        nodeModel = nodeModel,
         showHints = false,
         onAcceptAndTrust = {},
         onAcceptOnce = {},

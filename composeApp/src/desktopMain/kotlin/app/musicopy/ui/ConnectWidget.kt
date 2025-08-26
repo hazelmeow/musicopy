@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -55,17 +54,17 @@ import musicopy_root.musicopy.generated.resources.content_copy_24px
 import musicopy_root.musicopy.generated.resources.input_24px
 import musicopy_root.musicopy.generated.resources.open_in_new_24px
 import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.Model
+import uniffi.musicopy.NodeModel
 
 @Composable
 fun ConnectWidget(
-    model: Model,
+    nodeModel: NodeModel,
     showHints: Boolean,
     onAcceptAndTrust: (remoteNodeId: String) -> Unit,
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
 ) {
-    var nextPending = model.node.servers.find { !it.accepted }
+    val nextPending = nodeModel.servers.find { !it.accepted }
 
     // TODO: animate
     val title = if (nextPending == null) {
@@ -111,7 +110,7 @@ fun ConnectWidget(
                 )
             } ?: run {
                 DefaultScreen(
-                    localNodeId = model.node.nodeId,
+                    localNodeId = nodeModel.nodeId,
                     showHints = showHints
                 )
             }

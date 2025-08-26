@@ -1,7 +1,6 @@
 package app.musicopy.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,18 +46,18 @@ import musicopy_root.musicopy.generated.resources.folder_open_24px
 import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.CoreException
+import uniffi.musicopy.LibraryModel
 import uniffi.musicopy.LibraryRootModel
-import uniffi.musicopy.Model
 import uniffi.musicopy.pickFolder
 
 @Composable
 fun LibraryWidget(
-    model: Model,
+    libraryModel: LibraryModel,
     onAddRoot: (name: String, path: String) -> Unit,
     onRemoveRoot: (name: String) -> Unit,
     onRescan: () -> Unit,
 ) {
-    val localRoots = model.library.localRoots
+    val localRoots = libraryModel.localRoots
 
     val scope = rememberCoroutineScope()
 

@@ -24,11 +24,11 @@ import musicopy_root.musicopy.generated.resources.Res
 import musicopy_root.musicopy.generated.resources.delete_sweep_24px
 import musicopy_root.musicopy.generated.resources.folder_open_24px
 import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.Model
+import uniffi.musicopy.LibraryModel
 
 @Composable
 fun SettingsWidget(
-    model: Model,
+    libraryModel: LibraryModel,
 ) {
     WidgetContainer(
         title = "OPTIONS",
@@ -51,14 +51,14 @@ fun SettingsWidget(
                             overflow = TextOverflow.Ellipsis,
                         )
                         val count by rememberPoll(1000) {
-                            model.library.transcodeCountQueued.get() +
-                                    model.library.transcodeCountInprogress.get() +
-                                    model.library.transcodeCountReady.get()
+                            libraryModel.transcodeCountQueued.get() +
+                                    libraryModel.transcodeCountInprogress.get() +
+                                    libraryModel.transcodeCountReady.get()
                         }
                         Text(
                             text = "$count files, ${
                                 formatSize(
-                                    model.library.transcodesDirSize
+                                    libraryModel.transcodesDirSize
                                 )
                             }",
                             style = MaterialTheme.typography.labelMedium,
@@ -69,7 +69,7 @@ fun SettingsWidget(
 
                     IconButton(
                         onClick = {
-                            openDirectoryInExplorer(model.library.transcodesDir)
+                            openDirectoryInExplorer(libraryModel.transcodesDir)
                         },
                     ) {
                         Icon(

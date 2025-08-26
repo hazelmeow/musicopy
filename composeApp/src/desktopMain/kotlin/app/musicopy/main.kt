@@ -20,27 +20,34 @@ const val WINDOW_HEIGHT = 600
 fun main() = runBlocking {
     val platformAppContext = PlatformAppContext()
 
+    // TODO: measure how long blocking on this takes
+    // TODO: maybe switch to splash screen of some sort
+    val coreInstance = CoreInstance.start(platformAppContext)
 
     awaitApplication {
-    val state = rememberWindowState(
-        size = DpSize(WINDOW_WIDTH.dp, WINDOW_HEIGHT.dp),
-    )
+        val state = rememberWindowState(
+            size = DpSize(WINDOW_WIDTH.dp, WINDOW_HEIGHT.dp),
+        )
 
-    Window(
-        title = "Musicopy",
+        Window(
+            title = "Musicopy",
             // TODO: seems to maybe be broken after switching to awaitApplication for async setup
-        onCloseRequest = ::exitApplication,
-        state = state
-    ) {
+            onCloseRequest = ::exitApplication,
+            state = state
+        ) {
 //        window.minimumSize = Dimension(800, 600)
 
             val platformActivityContext = PlatformActivityContext(mainWindow = window)
 
-            TODO()
+            DesktopApp(
+                platformAppContext = platformAppContext,
+                platformActivityContext = platformActivityContext,
+                coreInstance = coreInstance
+            )
 
-        // TODO
-        Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
-            Text("window: ${LocalWindowInfo.current.containerSize}")
+            // TODO
+            Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
+                Text("window: ${LocalWindowInfo.current.containerSize}")
             }
         }
     }

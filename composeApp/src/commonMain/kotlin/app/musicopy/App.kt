@@ -9,8 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.viewmodel.MutableCreationExtras
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -40,17 +38,15 @@ import uniffi.musicopy.CoreException
 
 @Composable
 fun App(
-    platformContext: PlatformContext,
+    platformAppContext: PlatformAppContext,
+    platformActivityContext: PlatformActivityContext,
+    coreInstance: CoreInstance,
     navController: NavHostController = rememberNavController(),
 ) {
-    val extras = MutableCreationExtras().apply {
-        set(CoreViewModel.PLATFORM_CONTEXT_KEY, platformContext)
-    }
-    val viewModel: CoreViewModel = viewModel(factory = CoreViewModel.Factory, extras = extras)
+    val libraryModel by coreInstance.libraryState.collectAsState()
+    val nodeModel by coreInstance.nodeState.collectAsState()
 
-    val model by viewModel.state.collectAsState()
-
-    val directoryPicker = remember { DirectoryPicker(platformContext) }
+    val directoryPicker = remember { DirectoryPicker(platformActivityContext) }
 
     val scope = rememberCoroutineScope()
     var connectCount by remember { mutableStateOf(0) }
@@ -60,9 +56,9 @@ fun App(
         scope.launch {
             connectCount += 1
             try {
-                viewModel.instance.connect(nodeId = nodeId)
+                coreInstance.instance.connect(nodeId = nodeId)
                 delay(100) // TODO
-                val client = viewModel.state.value?.node?.clients?.find { it.nodeId == nodeId }
+                val client = nodeModel.clients.find { it.nodeId == nodeId }
                 if (client?.accepted == true) {
                     navController.navigate(PreTransfer(nodeId = nodeId))
                 } else {
@@ -79,13 +75,13 @@ fun App(
     }
 
     val leaveClientScreen = { nodeId: String ->
-        viewModel.instance.closeClient(nodeId)
+        coreInstance.instance.closeClient(nodeId)
 
         navController.popBackStack(Home, inclusive = false)
     }
 
     val nodeStatusSheetState = rememberNodeStatusSheetState()
-    NodeStatusSheet(nodeStatusSheetState, model)
+    NodeStatusSheet(nodeStatusSheetState, nodeModel)
     val onShowNodeStatus = { nodeStatusSheetState.peek() }
 
     Theme {
@@ -121,169 +117,160 @@ fun App(
         ) {
             composable<Home> {
                 // TODO: make this better...
-                model?.let { model ->
-                    HomeScreen(
-                        onShowNodeStatus = onShowNodeStatus,
+                HomeScreen(
+                    onShowNodeStatus = onShowNodeStatus,
 
-                        recentServers = model.node.recentServers,
-                        onPickDownloadDirectory = {
-                            scope.launch {
-                                directoryPicker.pickDownloadDirectory()
-                            }
-                        },
-                        onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
-                        onConnectManuallyButtonClicked = {
-                            navController.navigate(
-                                ConnectManually
-                            )
-                        },
-                        onConnectRecent = onConnect,
-                    )
-                }
+                    recentServers = nodeModel.recentServers,
+                    onPickDownloadDirectory = {
+                        scope.launch {
+                            directoryPicker.pickDownloadDirectory()
+                        }
+                    },
+                    onConnectQRButtonClicked = { navController.navigate(ConnectQR) },
+                    onConnectManuallyButtonClicked = {
+                        navController.navigate(
+                            ConnectManually
+                        )
+                    },
+                    onConnectRecent = onConnect,
+                )
             }
             composable<ConnectQR> {
-                model?.let {
-                    ConnectQRScreen(
-                        onShowNodeStatus = onShowNodeStatus,
+                ConnectQRScreen(
+                    onShowNodeStatus = onShowNodeStatus,
 
-                        isConnecting = isConnecting,
-                        onSubmit = onConnect,
-                        onCancel = {
-                            navController.popBackStack(Home, inclusive = false)
-                        },
-                    )
-                }
+                    isConnecting = isConnecting,
+                    onSubmit = onConnect,
+                    onCancel = {
+                        navController.popBackStack(Home, inclusive = false)
+                    },
+                )
+
             }
             composable<ConnectManually> {
-                model?.let {
-                    ConnectManuallyScreen(
-                        onShowNodeStatus = onShowNodeStatus,
+                ConnectManuallyScreen(
+                    onShowNodeStatus = onShowNodeStatus,
 
-                        isConnecting = isConnecting,
-                        onSubmit = onConnect,
-                        onCancel = {
-                            navController.popBackStack(Home, inclusive = false)
-                        }
-                    )
-                }
+                    isConnecting = isConnecting,
+                    onSubmit = onConnect,
+                    onCancel = {
+                        navController.popBackStack(Home, inclusive = false)
+                    }
+                )
+
             }
             composable<Waiting> { backStackEntry ->
                 val waiting: Waiting = backStackEntry.toRoute()
                 val nodeId = waiting.nodeId
-                model?.let { model ->
-                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
 
-                    if (clientModel?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
-                        navController.navigate(PreTransfer(nodeId = nodeId)) {
-                            // pop Waiting screen from back stack
-                            popUpTo<Waiting>() {
-                                inclusive = true
-                            }
+                if (clientModel?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
+                    navController.navigate(PreTransfer(nodeId = nodeId)) {
+                        // pop Waiting screen from back stack
+                        popUpTo<Waiting>() {
+                            inclusive = true
                         }
                     }
+                }
 
-                    clientModel?.let { clientModel ->
-                        WaitingScreen(
-                            onShowNodeStatus = onShowNodeStatus,
+                clientModel?.let { clientModel ->
+                    WaitingScreen(
+                        onShowNodeStatus = onShowNodeStatus,
 
-                            clientModel = clientModel,
-                            onCancel = {
-                                leaveClientScreen(nodeId)
-                            }
-                        )
-                    }
+                        clientModel = clientModel,
+                        onCancel = {
+                            leaveClientScreen(nodeId)
+                        }
+                    )
+
                 }
             }
             composable<PreTransfer> { backStackEntry ->
                 val preTransfer: PreTransfer = backStackEntry.toRoute()
                 val nodeId = preTransfer.nodeId
-                model?.let { model ->
-                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
 
-                    // TODO: clientmodel just have a disconnected flag instead of removing immediately
-                    if (clientModel == null) {
-                        if (navController.currentDestination?.hasRoute<PreTransfer>() == true) {
-                            // navigate to Disconnected screen
-                            navController.navigate(Disconnected(nodeId = nodeId))
-                        }
-                    } else {
-                        val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
-                            null
-                        )
-
-                        PreTransferScreen(
-                            onShowNodeStatus = onShowNodeStatus,
-
-                            clientModel = clientModel,
-                            onDownloadAll = {
-                                downloadDirectory?.let { downloadDirectory ->
-                                    viewModel.instance.downloadAll(nodeId, downloadDirectory)
-                                    navController.navigate(Transfer(nodeId = nodeId))
-                                } ?: run {
-                                    // TODO toast?
-                                    println("download directory is null")
-                                }
-                            },
-                            onDownloadPartial = { items ->
-                                downloadDirectory?.let { downloadDirectory ->
-                                    viewModel.instance.downloadPartial(
-                                        nodeId,
-                                        items,
-                                        downloadDirectory
-                                    )
-                                    navController.navigate(Transfer(nodeId = nodeId))
-                                } ?: run {
-                                    // TODO toast?
-                                    println("download directory is null")
-                                }
-                            },
-                            onCancel = {
-                                leaveClientScreen(nodeId)
-                            }
-                        )
+                // TODO: clientmodel just have a disconnected flag instead of removing immediately
+                if (clientModel == null) {
+                    if (navController.currentDestination?.hasRoute<PreTransfer>() == true) {
+                        // navigate to Disconnected screen
+                        navController.navigate(Disconnected(nodeId = nodeId))
                     }
+                } else {
+                    val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
+                        null
+                    )
+
+                    PreTransferScreen(
+                        onShowNodeStatus = onShowNodeStatus,
+
+                        clientModel = clientModel,
+                        onDownloadAll = {
+                            downloadDirectory?.let { downloadDirectory ->
+                                coreInstance.instance.downloadAll(nodeId, downloadDirectory)
+                                navController.navigate(Transfer(nodeId = nodeId))
+                            } ?: run {
+                                // TODO toast?
+                                println("download directory is null")
+                            }
+                        },
+                        onDownloadPartial = { items ->
+                            downloadDirectory?.let { downloadDirectory ->
+                                coreInstance.instance.downloadPartial(
+                                    nodeId,
+                                    items,
+                                    downloadDirectory
+                                )
+                                navController.navigate(Transfer(nodeId = nodeId))
+                            } ?: run {
+                                // TODO toast?
+                                println("download directory is null")
+                            }
+                        },
+                        onCancel = {
+                            leaveClientScreen(nodeId)
+                        }
+                    )
+
                 }
             }
             composable<Transfer> { backStackEntry ->
                 val transfer: Transfer = backStackEntry.toRoute()
                 val nodeId = transfer.nodeId
-                model?.let { model ->
-                    val clientModel = model.node.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
 
-                    if (clientModel == null) {
-                        if (navController.currentDestination?.hasRoute<Transfer>() == true) {
-                            // navigate to Disconnected screen
-                            navController.navigate(Disconnected(nodeId = nodeId))
-                        }
-                    } else {
-                        TransferScreen(
-                            onShowNodeStatus = onShowNodeStatus,
-
-                            clientModel = clientModel,
-                            onCancel = {
-                                // pop back to pretransfer
-                                navController.popBackStack(PreTransfer(nodeId), inclusive = false)
-                            }
-                        )
+                if (clientModel == null) {
+                    if (navController.currentDestination?.hasRoute<Transfer>() == true) {
+                        // navigate to Disconnected screen
+                        navController.navigate(Disconnected(nodeId = nodeId))
                     }
+                } else {
+                    TransferScreen(
+                        onShowNodeStatus = onShowNodeStatus,
+
+                        clientModel = clientModel,
+                        onCancel = {
+                            // pop back to pretransfer
+                            navController.popBackStack(PreTransfer(nodeId), inclusive = false)
+                        }
+                    )
                 }
+
             }
             composable<Disconnected> { backStackEntry ->
                 val route: Disconnected = backStackEntry.toRoute()
                 val nodeId = route.nodeId
-                model?.let { model ->
-                    DisconnectedScreen(
-                        onShowNodeStatus = onShowNodeStatus,
+                DisconnectedScreen(
+                    onShowNodeStatus = onShowNodeStatus,
 
-                        nodeId = nodeId,
-                        isConnecting = isConnecting,
-                        onReconnect = { onConnect(nodeId) },
-                        onCancel = {
-                            // pop back to home
-                            navController.popBackStack(Home, inclusive = false)
-                        }
-                    )
-                }
+                    nodeId = nodeId,
+                    isConnecting = isConnecting,
+                    onReconnect = { onConnect(nodeId) },
+                    onCancel = {
+                        // pop back to home
+                        navController.popBackStack(Home, inclusive = false)
+                    }
+                )
             }
         }
     }

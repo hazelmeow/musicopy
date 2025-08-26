@@ -44,11 +44,13 @@ import musicopy_root.musicopy.BuildConfig
 import musicopy_root.musicopy.generated.resources.Res
 import musicopy_root.musicopy.generated.resources.info_24px
 import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.Model
+import uniffi.musicopy.LibraryModel
+import uniffi.musicopy.NodeModel
 
 @Composable
 fun DesktopHome(
-    model: Model,
+    libraryModel: LibraryModel,
+    nodeModel: NodeModel,
     showHints: Boolean,
     onAcceptAndTrust: (remoteNodeId: String) -> Unit,
     onAcceptOnce: (remoteNodeId: String) -> Unit,
@@ -102,13 +104,13 @@ fun DesktopHome(
 
             val left = @Composable {
                 LibraryWidget(
-                    model = model,
+                    libraryModel = libraryModel,
                     onAddRoot = onAddLibraryRoot,
                     onRemoveRoot = onRemoveLibraryRoot,
                     onRescan = onRescanLibrary,
                 )
                 ConnectWidget(
-                    model = model,
+                    nodeModel = nodeModel,
                     showHints = showHints,
                     onAcceptAndTrust = onAcceptAndTrust,
                     onAcceptOnce = onAcceptOnce,
@@ -117,10 +119,11 @@ fun DesktopHome(
             }
             val right = @Composable {
                 SettingsWidget(
-                    model = model,
+                    libraryModel = libraryModel,
                 )
                 JobsWidget(
-                    model = model,
+                    libraryModel = libraryModel,
+                    nodeModel = nodeModel,
                 )
             }
 

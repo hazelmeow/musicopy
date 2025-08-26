@@ -10,6 +10,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 
@@ -44,16 +47,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
+
+        val splashScreen = installSplashScreen()
+
         super.onCreate(savedInstanceState)
 
-        // register lifecycle observer
+        // register activity lifecycle observer
         observer = AppLifecycleObserver(activityResultRegistry, contentResolver)
         lifecycle.addObserver(observer)
+
+        // wait for core instance to be initialized
+        val app = application as AppApplication
+        splashScreen.setKeepOnScreenCondition { !app.coreInstanceReady.value }
 
         val platformActivityContext = PlatformActivityContext(this)
 
         setContent {
-            TODO()
+            val coreInstanceReady by app.coreInstanceReady.collectAsState()
+            if (coreInstanceReady) {
+                App(
+                    platformAppContext = app.platformAppContext,
+                    platformActivityContext = platformActivityContext,
+                    coreInstance = app.coreInstance
+                )
+            }
         }
     }
 }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +30,8 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.musicopy.shortenNodeId
+import app.musicopy.toClipEntry
 import com.composables.core.DragIndication
 import com.composables.core.ModalBottomSheet
 import com.composables.core.ModalBottomSheetState
@@ -56,9 +57,7 @@ import musicopy_root.musicopy.generated.resources.received_label
 import musicopy_root.musicopy.generated.resources.sent_label
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
-import uniffi.musicopy.Model
-import app.musicopy.shortenNodeId
-import app.musicopy.toClipEntry
+import uniffi.musicopy.NodeModel
 
 
 val Peek = SheetDetent(identifier = "peek") { containerHeight, sheetHeight ->
@@ -93,7 +92,7 @@ fun rememberNodeStatusSheetState(): NodeStatusSheetState {
 }
 
 @Composable
-fun NodeStatusSheet(state: NodeStatusSheetState, model: Model? = null) {
+fun NodeStatusSheet(state: NodeStatusSheetState, nodeModel: NodeModel) {
     ModalBottomSheet(state = state.inner) {
         Scrim(
             enter = fadeIn(),
@@ -123,45 +122,41 @@ fun NodeStatusSheet(state: NodeStatusSheetState, model: Model? = null) {
                     )
                 }
 
-                model?.let {
-                    Column(
-                        modifier = Modifier.padding(8.dp).padding(bottom = 20.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        StatusDetail(
-                            label = stringResource(resource = Res.string.node_id_label),
-                            value = shortenNodeId(model.node.nodeId),
-                            iconPainter = painterResource(Res.drawable.network_node_24px),
-                            textToCopy = model.node.nodeId
-                        )
+                Column(
+                    modifier = Modifier.padding(8.dp).padding(bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    StatusDetail(
+                        label = stringResource(resource = Res.string.node_id_label),
+                        value = shortenNodeId(nodeModel.nodeId),
+                        iconPainter = painterResource(Res.drawable.network_node_24px),
+                        textToCopy = nodeModel.nodeId
+                    )
 
-                        StatusDetail(
-                            label = stringResource(resource = Res.string.home_relay_label),
-                            value = model.node.homeRelay,
-                            iconPainter = painterResource(Res.drawable.cell_tower_24px),
-                            textToCopy = model.node.homeRelay
-                        )
+                    StatusDetail(
+                        label = stringResource(resource = Res.string.home_relay_label),
+                        value = nodeModel.homeRelay,
+                        iconPainter = painterResource(Res.drawable.cell_tower_24px),
+                        textToCopy = nodeModel.homeRelay
+                    )
 
-                        StatusDetail(
-                            label = stringResource(resource = Res.string.connections_label),
-                            value = "${model.node.connSuccess} success, ${model.node.connDirect} direct",
-                            iconPainter = painterResource(Res.drawable.p2p_24px),
-                        )
+                    StatusDetail(
+                        label = stringResource(resource = Res.string.connections_label),
+                        value = "${nodeModel.connSuccess} success, ${nodeModel.connDirect} direct",
+                        iconPainter = painterResource(Res.drawable.p2p_24px),
+                    )
 
-                        StatusDetail(
-                            label = stringResource(resource = Res.string.sent_label),
-                            value = "${model.node.sendIpv4} v4, ${model.node.sendIpv6} v6, ${model.node.sendRelay} relay",
-                            iconPainter = painterResource(Res.drawable.arrow_upward_24px),
-                        )
+                    StatusDetail(
+                        label = stringResource(resource = Res.string.sent_label),
+                        value = "${nodeModel.sendIpv4} v4, ${nodeModel.sendIpv6} v6, ${nodeModel.sendRelay} relay",
+                        iconPainter = painterResource(Res.drawable.arrow_upward_24px),
+                    )
 
-                        StatusDetail(
-                            label = stringResource(resource = Res.string.received_label),
-                            value = "${model.node.recvIpv4} v4, ${model.node.recvIpv6} v6, ${model.node.recvRelay} relay",
-                            iconPainter = painterResource(Res.drawable.arrow_downward_24px),
-                        )
-                    }
-                } ?: run {
-                    CircularProgressIndicator()
+                    StatusDetail(
+                        label = stringResource(resource = Res.string.received_label),
+                        value = "${nodeModel.recvIpv4} v4, ${nodeModel.recvIpv6} v6, ${nodeModel.recvRelay} relay",
+                        iconPainter = painterResource(Res.drawable.arrow_downward_24px),
+                    )
                 }
             }
         }

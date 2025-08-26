@@ -8,45 +8,41 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.MutableCreationExtras
-import androidx.lifecycle.viewmodel.compose.viewModel
-import app.musicopy.CoreViewModel
-import app.musicopy.PlatformContext
+import app.musicopy.CoreInstance
+import app.musicopy.PlatformActivityContext
+import app.musicopy.PlatformAppContext
 
 @Composable
 fun DesktopApp(
-    platformContext: PlatformContext,
+    platformAppContext: PlatformAppContext,
+    platformActivityContext: PlatformActivityContext,
+    coreInstance: CoreInstance,
 ) {
-    val extras = MutableCreationExtras().apply {
-        set(CoreViewModel.PLATFORM_CONTEXT_KEY, platformContext)
-    }
-    val viewModel: CoreViewModel = viewModel(factory = CoreViewModel.Factory, extras = extras)
-
-    val model by viewModel.state.collectAsState()
+    val libraryModel by coreInstance.libraryState.collectAsState()
+    val nodeModel by coreInstance.nodeState.collectAsState()
 
     Theme {
         Box(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
-            model?.let {
-                DesktopHome(
-                    model = it,
-                    showHints = true,
-                    onAcceptAndTrust = { nodeId ->
-                        viewModel.instance.acceptConnectionAndTrust(
-                            nodeId
-                        )
-                    },
-                    onAcceptOnce = { nodeId -> viewModel.instance.acceptConnection(nodeId) },
-                    onDeny = { nodeId -> viewModel.instance.denyConnection(nodeId) },
-                    onAddLibraryRoot = { name, path ->
-                        viewModel.instance.addLibraryRoot(
-                            name,
-                            path
-                        )
-                    },
-                    onRemoveLibraryRoot = { name -> viewModel.instance.removeLibraryRoot(name) },
-                    onRescanLibrary = { viewModel.instance.rescanLibrary() }
-                )
-            }
+            DesktopHome(
+                libraryModel = libraryModel,
+                nodeModel = nodeModel,
+                showHints = true,
+                onAcceptAndTrust = { nodeId ->
+                    coreInstance.instance.acceptConnectionAndTrust(
+                        nodeId
+                    )
+                },
+                onAcceptOnce = { nodeId -> coreInstance.instance.acceptConnection(nodeId) },
+                onDeny = { nodeId -> coreInstance.instance.denyConnection(nodeId) },
+                onAddLibraryRoot = { name, path ->
+                    coreInstance.instance.addLibraryRoot(
+                        name,
+                        path
+                    )
+                },
+                onRemoveLibraryRoot = { name -> coreInstance.instance.removeLibraryRoot(name) },
+                onRescanLibrary = { coreInstance.instance.rescanLibrary() }
+            )
         }
     }
 }

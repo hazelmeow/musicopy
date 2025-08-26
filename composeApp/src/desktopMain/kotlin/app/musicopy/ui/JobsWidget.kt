@@ -25,32 +25,33 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.unit.dp
+import app.musicopy.formatFloat
+import app.musicopy.shortenNodeId
+import app.musicopy.ui.components.AnimatedList
+import app.musicopy.ui.components.WidgetContainer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import musicopy_root.musicopy.generated.resources.Res
 import musicopy_root.musicopy.generated.resources.chevron_forward_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.LibraryModel
-import uniffi.musicopy.Model
+import uniffi.musicopy.NodeModel
 import uniffi.musicopy.ServerModel
 import uniffi.musicopy.TransferJobProgressModel
-import app.musicopy.formatFloat
-import app.musicopy.shortenNodeId
-import app.musicopy.ui.components.AnimatedList
-import app.musicopy.ui.components.WidgetContainer
 
 @Composable
 fun JobsWidget(
-    model: Model,
+    libraryModel: LibraryModel,
+    nodeModel: NodeModel,
 ) {
-    val activeServers = model.node.servers.filter { it.accepted }
+    val activeServers = nodeModel.servers.filter { it.accepted }
 
     var transcodesNotReady by remember { mutableStateOf(0) }
     LaunchedEffect(true) {
         while (isActive) {
-            val countQueued = model.library.transcodeCountQueued.get()
-            val countInProgress = model.library.transcodeCountInprogress.get()
-            val countFailed = model.library.transcodeCountFailed.get()
+            val countQueued = libraryModel.transcodeCountQueued.get()
+            val countInProgress = libraryModel.transcodeCountInprogress.get()
+            val countFailed = libraryModel.transcodeCountFailed.get()
 
             transcodesNotReady =
                 (countQueued + countInProgress + countFailed).toInt()
@@ -70,7 +71,7 @@ fun JobsWidget(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 AnimatedVisibility(transcodesNotReady > 0) {
-                    TranscodeJob(model.library)
+                    TranscodeJob(libraryModel)
                 }
 
                 AnimatedList(

@@ -16,22 +16,28 @@ import kotlinx.coroutines.runBlocking
 fun main() = runBlocking {
     val platformAppContext = PlatformAppContext()
 
+    // TODO: measure how long blocking on this takes
+    val coreInstance = CoreInstance.start(platformAppContext)
 
     awaitApplication {
-    val state = rememberWindowState()
+        val state = rememberWindowState()
 
-    Window(
-        title = "Musicopy",
-        onCloseRequest = ::exitApplication,
-        state = state
-    ) {
+        Window(
+            title = "Musicopy",
+            onCloseRequest = ::exitApplication,
+            state = state
+        ) {
             val platformActivityContext = PlatformActivityContext(mainWindow = window)
 
-            TODO()
+            App(
+                platformAppContext = platformAppContext,
+                platformActivityContext = platformActivityContext,
+                coreInstance = coreInstance,
+            )
 
-        // TODO
-        Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
-            Text("window: ${LocalWindowInfo.current.containerSize}")
+            // TODO
+            Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
+                Text("window: ${LocalWindowInfo.current.containerSize}")
             }
         }
     }
