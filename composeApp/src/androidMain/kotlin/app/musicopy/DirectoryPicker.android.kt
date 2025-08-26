@@ -3,7 +3,7 @@ package app.musicopy
 actual class DirectoryPicker {
     private var activity: MainActivity
 
-    actual constructor(platformContext: PlatformContext) {
+    actual constructor(platformContext: PlatformActivityContext) {
         this.activity = platformContext.mainActivity
     }
 

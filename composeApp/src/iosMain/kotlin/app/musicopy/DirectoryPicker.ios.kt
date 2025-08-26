@@ -1,7 +1,7 @@
 package app.musicopy
 
 actual class DirectoryPicker {
-    actual constructor(platformContext: PlatformContext)
+    actual constructor(platformContext: PlatformActivityContext)
 
     actual suspend fun pickDownloadDirectory() {
         TODO()

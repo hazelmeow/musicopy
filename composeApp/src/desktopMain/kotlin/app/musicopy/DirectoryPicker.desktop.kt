@@ -4,7 +4,7 @@ import uniffi.musicopy.CoreException
 import uniffi.musicopy.pickFolder
 
 actual class DirectoryPicker {
-    actual constructor(platformContext: PlatformContext)
+    actual constructor(platformContext: PlatformActivityContext)
 
     actual suspend fun pickDownloadDirectory() {
         try {

@@ -3,14 +3,20 @@ package app.musicopy
 import androidx.compose.ui.platform.ClipEntry
 import uniffi.musicopy.CoreOptions
 
-expect class PlatformContext private constructor() {
+/**
+ * Platform-specific application/process-scoped context.
+ */
+expect class PlatformAppContext private constructor() {
     val name: String
 }
 
-expect fun toClipEntry(string: String): ClipEntry
+/**
+ * Platform-specific activity/scene-scoped context.
+ */
+expect class PlatformActivityContext private constructor() {}
 
 interface ICoreProvider {
-    fun getOptions(platformContext: PlatformContext): CoreOptions {
+    fun getOptions(platformAppContext: PlatformAppContext): CoreOptions {
         return CoreOptions(
             initLogging = true,
             inMemory = false,
@@ -20,5 +26,7 @@ interface ICoreProvider {
 }
 
 expect object CoreProvider : ICoreProvider;
+
+expect fun toClipEntry(string: String): ClipEntry
 
 expect fun formatFloat(f: Float, decimals: Int): String

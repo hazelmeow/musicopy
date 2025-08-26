@@ -48,9 +48,10 @@ fun main() = application {
         onCloseRequest = ::exitApplication,
         state = state,
     ) {
-        val platformContext = PlatformContext(mainWindow = window)
+        val platformAppContext = PlatformAppContext()
+        val platformActivityContext = PlatformActivityContext(mainWindow = window)
 
-        Sandbox(platformContext)
+        Sandbox()
 
         // TODO
         Box(modifier = Modifier.offset(x = 8.dp, y = 8.dp)) {
@@ -60,9 +61,7 @@ fun main() = application {
 }
 
 @Composable
-private fun Sandbox(
-    platformContext: PlatformContext,
-) {
+private fun Sandbox() {
     Theme {
         SandboxContent()
     }

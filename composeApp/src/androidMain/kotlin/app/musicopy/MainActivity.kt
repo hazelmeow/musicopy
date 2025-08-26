@@ -50,10 +50,10 @@ class MainActivity : ComponentActivity() {
         observer = AppLifecycleObserver(activityResultRegistry, contentResolver)
         lifecycle.addObserver(observer)
 
-        val platformContext = PlatformContext(this)
+        val platformActivityContext = PlatformActivityContext(this)
 
         setContent {
-            App(platformContext)
+            TODO()
         }
     }
 }

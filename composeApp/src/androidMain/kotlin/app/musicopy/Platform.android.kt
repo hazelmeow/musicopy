@@ -8,9 +8,17 @@ import androidx.compose.ui.platform.toClipEntry
 import uniffi.musicopy.CoreOptions
 import uniffi.musicopy.ProjectDirsOptions
 
-actual class PlatformContext private actual constructor() {
+actual class PlatformAppContext private actual constructor() {
     actual val name: String = "Android ${Build.VERSION.SDK_INT}"
 
+    lateinit var application: AppApplication
+
+    constructor(application: AppApplication) : this() {
+        this.application = application
+    }
+}
+
+actual class PlatformActivityContext private actual constructor() {
     lateinit var mainActivity: MainActivity
         private set
 
@@ -19,19 +27,19 @@ actual class PlatformContext private actual constructor() {
     }
 }
 
-actual fun toClipEntry(string: String): ClipEntry =
-    ClipData.newPlainText("label", string).toClipEntry()
-
 actual object CoreProvider : ICoreProvider {
-    override fun getOptions(platformContext: PlatformContext): CoreOptions {
-        val options = super.getOptions(platformContext)
+    override fun getOptions(platformAppContext: PlatformAppContext): CoreOptions {
+        val options = super.getOptions(platformAppContext)
         options.projectDirs = ProjectDirsOptions(
-            dataDir = platformContext.mainActivity.filesDir.path,
-            cacheDir = platformContext.mainActivity.cacheDir.path
+            dataDir = platformAppContext.application.filesDir.path,
+            cacheDir = platformAppContext.application.cacheDir.path
         )
         return options
     }
 }
+
+actual fun toClipEntry(string: String): ClipEntry =
+    ClipData.newPlainText("label", string).toClipEntry()
 
 actual fun formatFloat(f: Float, decimals: Int): String {
     val df = DecimalFormat()

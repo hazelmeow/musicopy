@@ -6,15 +6,17 @@ import platform.UIKit.UIDevice
 import platform.Foundation.NSNumber
 import platform.Foundation.NSNumberFormatter
 
-actual class PlatformContext actual constructor() {
+actual class PlatformAppContext actual constructor() {
     actual val name: String =
         UIDevice.currentDevice.systemName() + " " + UIDevice.currentDevice.systemVersion
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
-actual fun toClipEntry(string: String): ClipEntry = ClipEntry.withPlainText(string)
+actual class PlatformActivityContext actual constructor() {}
 
 actual object CoreProvider : ICoreProvider
+
+@OptIn(ExperimentalComposeUiApi::class)
+actual fun toClipEntry(string: String): ClipEntry = ClipEntry.withPlainText(string)
 
 actual fun formatFloat(f: Float, decimals: Int): String {
     val formatter = NSNumberFormatter()

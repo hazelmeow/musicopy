@@ -3,9 +3,14 @@ package app.musicopy
 import androidx.compose.ui.window.ComposeUIViewController
 
 fun MainViewController() {
-    val platformContext = PlatformContext()
+    val platformAppContext = PlatformAppContext()
+    val platformActivityContext = PlatformActivityContext()
 
     ComposeUIViewController {
-        App(platformContext)
+        App(
+            platformAppContext = platformAppContext,
+            platformActivityContext = platformActivityContext,
+            coreInstance = TODO()
+        )
     }
 }
