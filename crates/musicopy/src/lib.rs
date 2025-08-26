@@ -242,26 +242,9 @@ impl Core {
                         }
                     });
 
-                    loop {
-                        tokio::select! {
-                            res = &mut library_task => {
-                                match res {
-                                    Ok(()) => warn!("core: library task exited"),
-                                    Err(e) => error!("core: library task panicked: {e:#}"),
-                                }
-                            }
-
-                            res = &mut node_task => {
-                                match res {
-                                    Ok(()) => warn!("core: node task exited"),
-                                    Err(e) => error!("core: node task panicked: {e:#}"),
-                                }
-                            }
-
-                            else => {
-                                break;
-                            }
-                        }
+                    let res = tokio::try_join!(&mut library_task, &mut node_task);
+                    if let Some(e) = res.err() {
+                        error!("core: error in main tasks: {e:#}");
                     }
 
                     debug!("core: async runtime exiting");
