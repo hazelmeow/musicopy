@@ -12,6 +12,7 @@ import androidx.compose.ui.window.rememberWindowState
 import app.musicopy.ui.DesktopApp
 import com.composeunstyled.Text
 import kotlinx.coroutines.runBlocking
+import uniffi.musicopy.CoreException
 
 
 const val WINDOW_WIDTH = 800
@@ -22,7 +23,12 @@ fun main() = runBlocking {
 
     // TODO: measure how long blocking on this takes
     // TODO: maybe switch to splash screen of some sort
-    val coreInstance = CoreInstance.start(platformAppContext)
+    val coreInstance = try {
+        CoreInstance.start(platformAppContext)
+    } catch (e: CoreException) {
+        println("error starting core: ${e.message()}")
+        return@runBlocking
+    }
 
     awaitApplication {
         val state = rememberWindowState(
