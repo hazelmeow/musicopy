@@ -50,12 +50,18 @@ fun App(
     val directoryPicker = remember { DirectoryPicker(platformActivityContext) }
 
     val scope = rememberCoroutineScope()
-    var connectCount by remember { mutableStateOf(0) }
-    val isConnecting = connectCount > 0
+    var connectingTo by remember { mutableStateOf<String?>(null) }
+    val isConnecting = connectingTo !== null
 
-    val onConnect = { nodeId: String ->
+    val onConnect = fun(nodeId: String) {
+        // only connect to one node at a time
+        if (connectingTo != null) {
+            println("onConnect failed, already connecting")
+            return
+        }
+        connectingTo = nodeId
+
         scope.launch {
-            connectCount += 1
             try {
                 coreInstance.instance.connect(nodeId = nodeId)
                 delay(100) // TODO
@@ -69,7 +75,7 @@ fun App(
                 // TODO
                 println("error during connect: $e")
             } finally {
-                connectCount -= 1
+                connectingTo = null
             }
         }
         Unit
@@ -117,11 +123,11 @@ fun App(
             }
         ) {
             composable<Home> {
-                // TODO: make this better...
                 HomeScreen(
                     onShowNodeStatus = onShowNodeStatus,
 
                     recentServers = nodeModel.recentServers,
+                    connectingTo = connectingTo,
                     onPickDownloadDirectory = {
                         scope.launch {
                             directoryPicker.pickDownloadDirectory()

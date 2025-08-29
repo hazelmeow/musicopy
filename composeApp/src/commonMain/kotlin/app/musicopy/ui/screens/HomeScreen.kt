@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +22,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -35,6 +40,8 @@ import app.musicopy.ui.components.DetailBox
 import app.musicopy.ui.components.DetailItem
 import app.musicopy.ui.components.SectionHeader
 import app.musicopy.ui.components.TopBar
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import musicopy_root.musicopy.generated.resources.Res
 import musicopy_root.musicopy.generated.resources.arrow_forward_24px
 import musicopy_root.musicopy.generated.resources.input_24px
@@ -49,6 +56,7 @@ fun HomeScreen(
     onShowNodeStatus: () -> Unit,
 
     recentServers: List<RecentServerModel>,
+    connectingTo: String?,
     onPickDownloadDirectory: () -> Unit,
     onConnectQRButtonClicked: () -> Unit,
     onConnectManuallyButtonClicked: () -> Unit,
@@ -153,6 +161,7 @@ fun HomeScreen(
                         for (recentServer in shown) {
                             RecentConnection(
                                 recentServer = recentServer,
+                                connectingTo = connectingTo,
                                 onConnect = {
                                     onConnectRecent(recentServer.nodeId)
                                 }
@@ -194,6 +203,7 @@ fun HomeSection(title: String, content: @Composable () -> Unit) {
 @Composable
 fun RecentConnection(
     recentServer: RecentServerModel,
+    connectingTo: String?,
     onConnect: () -> Unit,
 ) {
     val name = shortenNodeId(recentServer.nodeId)
@@ -207,7 +217,9 @@ fun RecentConnection(
     val detail = "${shortenNodeId(recentServer.nodeId)}, $readableDaysAgo"
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onConnect)
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onConnect,
+        enabled = connectingTo == null,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -229,20 +241,24 @@ fun RecentConnection(
                 )
             }
 
-            Icon(
-                painter = painterResource(Res.drawable.arrow_forward_24px),
-                contentDescription = null
-            )
+            if (connectingTo == recentServer.nodeId) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp)
+                )
+            } else {
+                Icon(
+                    painter = painterResource(Res.drawable.arrow_forward_24px),
+                    contentDescription = null
+                )
+            }
         }
     }
 }
 
 @Composable
 fun HomeScreenSandbox() {
-    HomeScreen(
-        onShowNodeStatus = {},
-
-        recentServers = buildList {
+    val recentServers = remember {
+        buildList {
             repeat(10) {
                 add(
                     RecentServerModel(
@@ -251,11 +267,30 @@ fun HomeScreenSandbox() {
                     )
                 )
             }
-        },
+        }
+    }
+
+    var connectingTo by remember { mutableStateOf<String?>(null) }
+
+    val coroutineScope = rememberCoroutineScope()
+    val onConnectRecent = { nodeId: String ->
+        coroutineScope.launch {
+            connectingTo = nodeId
+            delay(500)
+            connectingTo = null
+        }
+        Unit
+    }
+
+    HomeScreen(
+        onShowNodeStatus = {},
+
+        recentServers = recentServers,
+        connectingTo = connectingTo,
         onPickDownloadDirectory = {},
         onConnectQRButtonClicked = {},
         onConnectManuallyButtonClicked = {},
-        onConnectRecent = {},
+        onConnectRecent = onConnectRecent,
     )
 }
 

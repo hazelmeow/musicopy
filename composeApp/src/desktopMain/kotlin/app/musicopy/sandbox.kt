@@ -69,7 +69,7 @@ private fun Sandbox() {
 
 @Composable
 private fun SandboxContent() {
-    WaitingScreenSandbox()
+    HomeScreenSandbox()
 }
 
 @Composable
