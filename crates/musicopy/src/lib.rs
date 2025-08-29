@@ -295,7 +295,7 @@ impl Core {
     }
 
     pub fn get_library_model(&self) -> Result<LibraryModel, CoreError> {
-        Ok(self.library.model())
+        Ok(self.library.get_model())
     }
 
     pub async fn connect(&self, node_id: &str) -> Result<(), CoreError> {

@@ -150,7 +150,7 @@ pub struct RecentServerModel {
     pub connected_at: u64,
 }
 
-/// Node state sent to Compose.
+/// Node state sent to the UI.
 ///
 /// Needs to be Clone to send snapshots to the UI.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -401,11 +401,6 @@ impl Node {
         node.update_model(NodeModelUpdate::UpdateTrustedNodes);
         node.update_model(NodeModelUpdate::UpdateRecentServers);
 
-        let node_run = NodeRun {
-            command_rx,
-            event_rx,
-        };
-
         // spawn metrics polling task
         tokio::spawn({
             let node = node.clone();
@@ -437,6 +432,11 @@ impl Node {
                 }
             }
         });
+
+        let node_run = NodeRun {
+            command_rx,
+            event_rx,
+        };
 
         Ok((node, node_run))
     }
@@ -637,7 +637,7 @@ impl Node {
         model.clone()
     }
 
-    // TODO: throttle pushing updates
+    // TODO: throttle pushing updates?
     fn update_model(self: &Arc<Self>, update: NodeModelUpdate) {
         match update {
             NodeModelUpdate::PollMetrics => {

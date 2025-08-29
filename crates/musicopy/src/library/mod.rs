@@ -15,24 +15,27 @@ use std::{
     hash::Hasher,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use symphonia::core::{
     codecs::audio::VerificationCheck,
-    formats::{FormatOptions, TrackType, probe::Hint},
+    formats::{TrackType, probe::Hint},
     io::MediaSourceStream,
-    meta::MetadataOptions,
 };
 use tokio::sync::mpsc;
 use twox_hash::XxHash3_64;
 
-#[derive(Debug, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct LibraryRootModel {
     pub name: String,
     pub path: String,
     pub num_files: u64,
 }
 
-#[derive(Debug, uniffi::Record)]
+/// Library state sent to the UI.
+///
+/// Needs to be Clone to send snapshots to the UI.
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct LibraryModel {
     pub local_roots: Vec<LibraryRootModel>,
 
@@ -54,14 +57,10 @@ pub enum LibraryCommand {
     Stop,
 }
 
-/// The resources needed to run the Library run loop.
-///
-/// This is created by Library::new() and passed linearly to Library::run().
-/// This pattern allows the run loop to own and mutate these resources while
-/// hiding the details from the public API.
-#[derive(Debug)]
-pub struct LibraryRun {
-    command_rx: mpsc::UnboundedReceiver<LibraryCommand>,
+/// An update to the library model.
+enum LibraryModelUpdate {
+    UpdateLocalRoots,
+    UpdateTranscodesDirSize,
 }
 
 pub struct Library {
@@ -72,6 +71,8 @@ pub struct Library {
     transcode_pool: TranscodePool,
 
     command_tx: mpsc::UnboundedSender<LibraryCommand>,
+
+    model: Mutex<LibraryModel>,
 }
 
 // stub debug implementation
@@ -79,6 +80,16 @@ impl std::fmt::Debug for Library {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Library").finish()
     }
+}
+
+/// The resources needed to run the Library run loop.
+///
+/// This is created by Library::new() and passed linearly to Library::run().
+/// This pattern allows the run loop to own and mutate these resources while
+/// hiding the details from the public API.
+#[derive(Debug)]
+pub struct LibraryRun {
+    command_rx: mpsc::UnboundedReceiver<LibraryCommand>,
 }
 
 impl Library {
@@ -94,6 +105,18 @@ impl Library {
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
+        let model = LibraryModel {
+            local_roots: Vec::new(),
+
+            transcodes_dir: transcode_pool.transcodes_dir(),
+            transcodes_dir_size: transcode_pool.transcodes_dir_size(),
+
+            transcode_count_queued: Arc::new(transcode_pool.queued_count_model()),
+            transcode_count_inprogress: Arc::new(transcode_pool.inprogress_count_model()),
+            transcode_count_ready: Arc::new(transcode_pool.ready_count_model()),
+            transcode_count_failed: Arc::new(transcode_pool.failed_count_model()),
+        };
+
         let library = Arc::new(Self {
             event_handler,
             db,
@@ -102,12 +125,29 @@ impl Library {
             transcode_pool,
 
             command_tx,
+
+            model: Mutex::new(model),
         });
+
+        // initialize model
+        // TODO: don't push updates during init
+        library.update_model(LibraryModelUpdate::UpdateLocalRoots);
 
         // send all local files to the transcode pool to be transcoded if needed
         library
             .check_transcodes()
             .context("failed to check transcodes")?;
+
+        // spawn transcodes dir size polling task
+        tokio::spawn({
+            let library = library.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    library.update_model(LibraryModelUpdate::UpdateTranscodesDirSize);
+                }
+            }
+        });
 
         let library_run = LibraryRun { command_rx };
 
@@ -129,10 +169,10 @@ impl Library {
                                 db.add_root(self.local_node_id, &name, &path.to_string_lossy()).context("failed to add root")?;
                             }
 
-                            // TODO
-                            // self.notify_state();
+                            // update model
+                            self.update_model(LibraryModelUpdate::UpdateLocalRoots);
 
-                            // rescan the library after adding roots
+                            // rescan the library
                             self.spawn_scan();
                         }
                         LibraryCommand::RemoveRoot { name } => {
@@ -143,10 +183,10 @@ impl Library {
 
                             // TODO: remove files from root
 
-                            // TODO
-                            // self.notify_state();
+                            // update model
+                            self.update_model(LibraryModelUpdate::UpdateLocalRoots);
 
-                            // rescan the library after adding roots
+                            // rescan the library
                             self.spawn_scan();
                         }
                         LibraryCommand::Rescan => {
@@ -170,13 +210,16 @@ impl Library {
     }
 
     fn spawn_scan(self: &Arc<Self>) {
-        let protocol = self.clone();
+        let library = self.clone();
         tokio::spawn(async move {
             log::debug!("spawning library scan");
-            if let Err(e) = protocol.scan().await {
+            if let Err(e) = library.scan().await {
                 log::error!("error scanning library: {e:#}");
             }
             log::debug!("finished library scan");
+
+            // update root file counts in model
+            library.update_model(LibraryModelUpdate::UpdateLocalRoots);
         });
     }
 
@@ -382,36 +425,46 @@ impl Library {
             .map_err(|e| anyhow::anyhow!("failed to send command: {e:?}"))
     }
 
-    pub fn model(&self) -> LibraryModel {
-        let local_roots = {
-            let db = self.db.lock().unwrap();
-            db.get_roots_by_node_id(self.local_node_id)
-                .expect("failed to get local roots")
-                .into_iter()
-                .map(|root| {
-                    let count = db
-                        .count_files_by_root(self.local_node_id, &root.name)
-                        .expect("failed to count files"); // TODO
+    pub fn get_model(self: &Arc<Self>) -> LibraryModel {
+        let model = self.model.lock().unwrap();
+        model.clone()
+    }
 
-                    LibraryRootModel {
-                        name: root.name,
-                        path: root.path,
-                        num_files: count,
-                    }
-                })
-                .collect()
-        };
+    // TODO: throttle pushing updates?
+    fn update_model(self: &Arc<Self>, update: LibraryModelUpdate) {
+        match update {
+            LibraryModelUpdate::UpdateLocalRoots => {
+                let local_roots = {
+                    let db = self.db.lock().unwrap();
+                    db.get_roots_by_node_id(self.local_node_id)
+                        .expect("failed to get local roots")
+                        .into_iter()
+                        .map(|root| {
+                            let count = db
+                                .count_files_by_root(self.local_node_id, &root.name)
+                                .expect("failed to count files"); // TODO
 
-        LibraryModel {
-            local_roots,
+                            LibraryRootModel {
+                                name: root.name,
+                                path: root.path,
+                                num_files: count,
+                            }
+                        })
+                        .collect()
+                };
 
-            transcodes_dir: self.transcode_pool.transcodes_dir(),
-            transcodes_dir_size: self.transcode_pool.transcodes_dir_size(),
+                let mut model = self.model.lock().unwrap();
+                model.local_roots = local_roots;
 
-            transcode_count_queued: Arc::new(self.transcode_pool.queued_count_model()),
-            transcode_count_inprogress: Arc::new(self.transcode_pool.inprogress_count_model()),
-            transcode_count_ready: Arc::new(self.transcode_pool.ready_count_model()),
-            transcode_count_failed: Arc::new(self.transcode_pool.failed_count_model()),
+                self.event_handler.on_library_model_snapshot(model.clone());
+            }
+
+            LibraryModelUpdate::UpdateTranscodesDirSize => {
+                let mut model = self.model.lock().unwrap();
+                model.transcodes_dir_size = self.transcode_pool.transcodes_dir_size();
+
+                self.event_handler.on_library_model_snapshot(model.clone());
+            }
         }
     }
 }
