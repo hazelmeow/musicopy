@@ -37,6 +37,7 @@ import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.LibraryModel
 import uniffi.musicopy.NodeModel
 import uniffi.musicopy.ServerModel
+import uniffi.musicopy.ServerStateModel
 import uniffi.musicopy.TransferJobProgressModel
 
 @Composable
@@ -44,7 +45,7 @@ fun JobsWidget(
     libraryModel: LibraryModel,
     nodeModel: NodeModel,
 ) {
-    val activeServers = nodeModel.servers.filter { it.accepted }
+    val activeServers = nodeModel.servers.values.filter { it.state is ServerStateModel.Accepted }
 
     var transcodesNotReady by remember { mutableStateOf(0) }
     LaunchedEffect(true) {

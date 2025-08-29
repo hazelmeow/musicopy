@@ -34,6 +34,7 @@ import app.musicopy.ui.screens.Waiting
 import app.musicopy.ui.screens.WaitingScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import uniffi.musicopy.ClientStateModel
 import uniffi.musicopy.CoreException
 
 @Composable
@@ -58,8 +59,8 @@ fun App(
             try {
                 coreInstance.instance.connect(nodeId = nodeId)
                 delay(100) // TODO
-                val client = nodeModel.clients.find { it.nodeId == nodeId }
-                if (client?.accepted == true) {
+                val client = nodeModel.clients.values.find { it.nodeId == nodeId }
+                if (client?.state is ClientStateModel.Accepted) {
                     navController.navigate(PreTransfer(nodeId = nodeId))
                 } else {
                     navController.navigate(Waiting(nodeId = nodeId))
@@ -162,13 +163,27 @@ fun App(
             composable<Waiting> { backStackEntry ->
                 val waiting: Waiting = backStackEntry.toRoute()
                 val nodeId = waiting.nodeId
-                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.values.find { x -> x.nodeId == nodeId }
 
-                if (clientModel?.accepted == true && navController.currentDestination?.hasRoute<Waiting>() == true) {
-                    navController.navigate(PreTransfer(nodeId = nodeId)) {
-                        // pop Waiting screen from back stack
-                        popUpTo<Waiting>() {
-                            inclusive = true
+                // if still on this route
+                if (navController.currentDestination?.hasRoute<Waiting>() == true) {
+                    // if accepted
+                    if (clientModel?.state is ClientStateModel.Accepted) {
+                        navController.navigate(PreTransfer(nodeId = nodeId)) {
+                            // pop Waiting screen from back stack
+                            popUpTo<Waiting>() {
+                                inclusive = true
+                            }
+                        }
+                    }
+
+                    // if closed
+                    if (clientModel?.state is ClientStateModel.Closed) {
+                        navController.navigate(Disconnected(nodeId = nodeId)) {
+                            // pop Waiting screen from back stack
+                            popUpTo<Waiting>() {
+                                inclusive = true
+                            }
                         }
                     }
                 }
@@ -188,15 +203,24 @@ fun App(
             composable<PreTransfer> { backStackEntry ->
                 val preTransfer: PreTransfer = backStackEntry.toRoute()
                 val nodeId = preTransfer.nodeId
-                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.values.find { x -> x.nodeId == nodeId }
 
-                // TODO: clientmodel just have a disconnected flag instead of removing immediately
-                if (clientModel == null) {
-                    if (navController.currentDestination?.hasRoute<PreTransfer>() == true) {
+                // if still on this route
+                if (navController.currentDestination?.hasRoute<PreTransfer>() == true) {
+                    // if closed
+                    if (clientModel?.state is ClientStateModel.Closed) {
                         // navigate to Disconnected screen
-                        navController.navigate(Disconnected(nodeId = nodeId))
+                        navController.navigate(Disconnected(nodeId = nodeId)) {
+                            // clear back stack
+                            popUpTo<Home> {
+                                inclusive = false
+                            }
+                        }
                     }
-                } else {
+                }
+
+                // TODO: handle null better, redirect to error screen?
+                if (clientModel != null) {
                     val downloadDirectory by AppSettings.downloadDirectoryFlow.collectAsState(
                         null
                     )
@@ -237,14 +261,24 @@ fun App(
             composable<Transfer> { backStackEntry ->
                 val transfer: Transfer = backStackEntry.toRoute()
                 val nodeId = transfer.nodeId
-                val clientModel = nodeModel.clients.find { x -> x.nodeId == nodeId }
+                val clientModel = nodeModel.clients.values.find { x -> x.nodeId == nodeId }
 
-                if (clientModel == null) {
-                    if (navController.currentDestination?.hasRoute<Transfer>() == true) {
+                // if still on this route
+                if (navController.currentDestination?.hasRoute<Transfer>() == true) {
+                    // if closed
+                    if (clientModel?.state is ClientStateModel.Closed) {
                         // navigate to Disconnected screen
-                        navController.navigate(Disconnected(nodeId = nodeId))
+                        navController.navigate(Disconnected(nodeId = nodeId)) {
+                            // clear back stack
+                            popUpTo<Home> {
+                                inclusive = false
+                            }
+                        }
                     }
-                } else {
+                }
+
+                // TODO: handle null better, redirect to error screen?
+                if (clientModel != null) {
                     TransferScreen(
                         onShowNodeStatus = onShowNodeStatus,
 

@@ -55,6 +55,7 @@ import musicopy_root.musicopy.generated.resources.input_24px
 import musicopy_root.musicopy.generated.resources.open_in_new_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.NodeModel
+import uniffi.musicopy.ServerStateModel
 
 @Composable
 fun ConnectWidget(
@@ -64,7 +65,7 @@ fun ConnectWidget(
     onAcceptOnce: (remoteNodeId: String) -> Unit,
     onDeny: (remoteNodeId: String) -> Unit,
 ) {
-    val nextPending = nodeModel.servers.find { !it.accepted }
+    val nextPending = nodeModel.servers.values.find { it.state is ServerStateModel.Pending }
 
     // TODO: animate
     val title = if (nextPending == null) {

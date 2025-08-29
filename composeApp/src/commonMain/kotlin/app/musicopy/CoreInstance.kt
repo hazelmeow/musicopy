@@ -35,10 +35,15 @@ class CoreInstance private constructor() : EventHandler {
         get() = _nodeState
 
     override fun onLibraryModelSnapshot(model: LibraryModel) {
-        _libraryState.value = model
+        // TODO: this is a hack because Core.start calls the callback before CoreInstance finishes initializing
+        if (::_libraryState.isInitialized) {
+            _libraryState.value = model
+        }
     }
 
     override fun onNodeModelSnapshot(model: NodeModel) {
-        _nodeState.value = model
+        if (::_nodeState.isInitialized) {
+            _nodeState.value = model
+        }
     }
 }

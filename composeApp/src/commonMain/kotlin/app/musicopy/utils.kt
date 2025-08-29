@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.datetime.Clock
 import uniffi.musicopy.ClientModel
+import uniffi.musicopy.ClientStateModel
 import uniffi.musicopy.CounterModel
 import uniffi.musicopy.FileSizeModel
 import uniffi.musicopy.IndexItemModel
@@ -16,6 +17,7 @@ import uniffi.musicopy.LibraryModel
 import uniffi.musicopy.LibraryRootModel
 import uniffi.musicopy.NodeModel
 import uniffi.musicopy.ServerModel
+import uniffi.musicopy.ServerStateModel
 import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
 
@@ -103,8 +105,8 @@ fun mockNodeModel(
         recvRelay = 12345u,
         connSuccess = 4u,
         connDirect = 3u,
-        servers = servers,
-        clients = clients,
+        servers = servers.associateBy { it.nodeId },
+        clients = clients.associateBy { it.nodeId },
         trustedNodes = emptyList(),
         recentServers = emptyList(),
     )
@@ -117,7 +119,7 @@ fun mockServerModel(
         name = "My Phone",
         nodeId = mockNodeId(),
         connectedAt = now(),
-        accepted = true,
+        state = ServerStateModel.Accepted,
         connectionType = "direct",
         latencyMs = 42u,
         transferJobs = transferJobs
@@ -142,7 +144,7 @@ fun mockClientModel(
         name = "My Desktop",
         nodeId = mockNodeId(),
         connectedAt = now(),
-        accepted = true,
+        state = ClientStateModel.Accepted,
         connectionType = "direct",
         latencyMs = 42u,
         index = listOf(
