@@ -177,78 +177,91 @@ impl Core {
         std::thread::spawn({
             let db = db.clone();
             move || {
-                // TODO: tune number of threads on mobile?
-                let builder = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .expect("should build runtime");
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // TODO: tune number of threads on mobile?
+                    let builder = tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()
+                        .expect("should build runtime");
 
-                builder.block_on(async move {
-                    debug!("core: inside async runtime");
+                    builder.block_on(async move {
+                        debug!("core: inside async runtime");
 
-                    // initialize components concurrently
-                    let (library_res, node_res) = tokio::join!(
-                        Library::new(
-                            event_handler.clone(),
-                            db.clone(),
-                            node_id,
-                            transcodes_dir.clone(),
-                            transcode_status_cache.clone(),
-                        ),
-                        Node::new(event_handler, secret_key, db, transcode_status_cache,),
-                    );
+                        // initialize components concurrently
+                        let (library_res, node_res) = tokio::join!(
+                            Library::new(
+                                event_handler.clone(),
+                                db.clone(),
+                                node_id,
+                                transcodes_dir.clone(),
+                                transcode_status_cache.clone(),
+                            ),
+                            Node::new(event_handler, secret_key, db, transcode_status_cache),
+                        );
 
-                    let (library, library_run) = match library_res {
-                        Ok(x) => x,
-                        Err(e) => {
-                            error!("core: error creating library: {e:#}");
-                            res_tx
-                                .send(Err(core_error!("failed to create library")))
-                                .expect("failed to send result to core constructor");
-                            return;
-                        }
-                    };
-
-                    let (node, node_run) = match node_res {
-                        Ok(x) => x,
-                        Err(e) => {
-                            error!("core: error creating node: {e:#}");
-                            res_tx
-                                .send(Err(core_error!("failed to create node")))
-                                .expect("failed to send result to core constructor");
-                            return;
-                        }
-                    };
-
-                    res_tx
-                        .send(Ok((library.clone(), node.clone())))
-                        .expect("failed to send result to core constructor");
-
-                    let mut library_task = tokio::spawn({
-                        let library = library.clone();
-                        async move {
-                            if let Err(e) = library.run(library_run).await {
-                                error!("core: error running library: {e:#}");
+                        let (library, library_run) = match library_res {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("core: error creating library: {e:#}");
+                                res_tx
+                                    .send(Err(core_error!("failed to create library")))
+                                    .expect("failed to send result to core constructor");
+                                return;
                             }
-                        }
-                    });
+                        };
 
-                    let mut node_task = tokio::spawn({
-                        let node = node.clone();
-                        async move {
-                            if let Err(e) = node.run(node_run).await {
-                                error!("core: error running node: {e:#}");
+                        let (node, node_run) = match node_res {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("core: error creating node: {e:#}");
+                                res_tx
+                                    .send(Err(core_error!("failed to create node")))
+                                    .expect("failed to send result to core constructor");
+                                return;
                             }
-                        }
-                    });
+                        };
 
-                    let res = tokio::try_join!(&mut library_task, &mut node_task);
-                    if let Some(e) = res.err() {
-                        error!("core: error in main tasks: {e:#}");
+                        res_tx
+                            .send(Ok((library.clone(), node.clone())))
+                            .expect("failed to send result to core constructor");
+
+                        let mut library_task = tokio::spawn({
+                            let library = library.clone();
+                            async move {
+                                if let Err(e) = library.run(library_run).await {
+                                    error!("core: error running library: {e:#}");
+                                }
+                            }
+                        });
+
+                        let mut node_task = tokio::spawn({
+                            let node = node.clone();
+                            async move {
+                                if let Err(e) = node.run(node_run).await {
+                                    error!("core: error running node: {e:#}");
+                                }
+                            }
+                        });
+
+                        let res = tokio::try_join!(&mut library_task, &mut node_task);
+                        if let Some(e) = res.err() {
+                            error!("core: error in main tasks: {e:#}");
+                        }
+
+                        debug!("core: async runtime exiting");
+                    });
+                }));
+
+                if let Err(e) = &res {
+                    error!("core: panic in core thread: {e:?}");
+
+                    if let Some(s) = e.downcast_ref::<std::string::String>() {
+                        error!("core: panic info: {s}");
                     }
-
-                    debug!("core: async runtime exiting");
-                });
+                    if let Some(s) = e.downcast_ref::<&'static str>() {
+                        error!("core: panic info: {s}");
+                    }
+                }
             }
         });
 
