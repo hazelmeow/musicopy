@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import app.musicopy.AppSettings
 import app.musicopy.CoreInstance
 import app.musicopy.PlatformActivityContext
 import app.musicopy.PlatformAppContext
@@ -41,7 +42,11 @@ fun DesktopApp(
                     )
                 },
                 onRemoveLibraryRoot = { name -> coreInstance.instance.removeLibraryRoot(name) },
-                onRescanLibrary = { coreInstance.instance.rescanLibrary() }
+                onRescanLibrary = { coreInstance.instance.rescanLibrary() },
+                onSetTranscodePolicy = { policy ->
+                    AppSettings.transcodePolicy = policy
+                    coreInstance.instance.setTranscodePolicy(policy)
+                }
             )
         }
     }

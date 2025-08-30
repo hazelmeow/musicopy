@@ -22,7 +22,7 @@ interface ICoreProvider {
             initLogging = true,
             inMemory = false,
             projectDirs = null,
-            transcodePolicy = TranscodePolicy.IF_REQUESTED, // TODO
+            transcodePolicy = AppSettings.transcodePolicy
         )
     }
 }

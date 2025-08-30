@@ -46,6 +46,7 @@ import musicopy_root.musicopy.generated.resources.info_24px
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.LibraryModel
 import uniffi.musicopy.NodeModel
+import uniffi.musicopy.TranscodePolicy
 
 @Composable
 fun DesktopHome(
@@ -58,6 +59,7 @@ fun DesktopHome(
     onAddLibraryRoot: (name: String, path: String) -> Unit,
     onRemoveLibraryRoot: (name: String) -> Unit,
     onRescanLibrary: () -> Unit,
+    onSetTranscodePolicy: (TranscodePolicy) -> Unit,
 ) {
     val oneCol = LocalWindowInfo.current.containerSize.width < 600
 
@@ -120,6 +122,7 @@ fun DesktopHome(
             val right = @Composable {
                 SettingsWidget(
                     libraryModel = libraryModel,
+                    onSetTranscodePolicy = onSetTranscodePolicy,
                 )
                 JobsWidget(
                     libraryModel = libraryModel,

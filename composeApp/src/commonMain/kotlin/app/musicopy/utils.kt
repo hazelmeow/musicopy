@@ -18,6 +18,7 @@ import uniffi.musicopy.LibraryRootModel
 import uniffi.musicopy.NodeModel
 import uniffi.musicopy.ServerModel
 import uniffi.musicopy.ServerStateModel
+import uniffi.musicopy.TranscodePolicy
 import uniffi.musicopy.TransferJobModel
 import uniffi.musicopy.TransferJobProgressModel
 
@@ -330,7 +331,8 @@ fun mockLibraryModel(
         transcodeCountQueued = if (transcoding) CounterModel(27u) else CounterModel(0u),
         transcodeCountInprogress = if (transcoding) CounterModel(8u) else CounterModel(0u),
         transcodeCountReady = if (transcoding) CounterModel(143u) else CounterModel(0u),
-        transcodeCountFailed = CounterModel(0u)
+        transcodeCountFailed = CounterModel(0u),
+        transcodePolicy = TranscodePolicy.IF_REQUESTED
     )
 }
 
