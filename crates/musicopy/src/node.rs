@@ -2070,11 +2070,11 @@ impl Client {
 
                             // update model
                             event_tx
-                                .send(NodeEvent::ServerChanged {
+                                .send(NodeEvent::ClientChanged {
                                     node_id: remote_node_id,
-                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                    update: ClientModelUpdate::UpdateTransferJobs,
                                 })
-                                .expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+                                .expect("failed to send ClientModelUpdate::UpdateTransferJobs");
 
                             // build file path
                             let local_path = {
@@ -2117,11 +2117,11 @@ impl Client {
 
                             // update model
                             event_tx
-                                .send(NodeEvent::ServerChanged {
+                                .send(NodeEvent::ClientChanged {
                                     node_id: remote_node_id,
-                                    update: ServerModelUpdate::UpdateTransferJobs,
+                                    update: ClientModelUpdate::UpdateTransferJobs,
                                 })
-                                .expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+                                .expect("failed to send ClientModelUpdate::UpdateTransferJobs");
 
                             log::debug!("saved file to {local_path:?}");
 
