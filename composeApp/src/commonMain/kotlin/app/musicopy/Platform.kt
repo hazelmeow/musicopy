@@ -2,6 +2,7 @@ package app.musicopy
 
 import androidx.compose.ui.platform.ClipEntry
 import uniffi.musicopy.CoreOptions
+import uniffi.musicopy.TranscodePolicy
 
 /**
  * Platform-specific application/process-scoped context.
@@ -21,6 +22,7 @@ interface ICoreProvider {
             initLogging = true,
             inMemory = false,
             projectDirs = null,
+            transcodePolicy = TranscodePolicy.IF_REQUESTED, // TODO
         )
     }
 }

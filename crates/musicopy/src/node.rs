@@ -12,7 +12,10 @@ use crate::{
     EventHandler,
     database::Database,
     fs::{OpenMode, TreeFile, TreePath},
-    library::transcode::{TranscodeStatus, TranscodeStatusCache},
+    library::{
+        Library, LibraryCommand,
+        transcode::{TranscodeStatus, TranscodeStatusCache},
+    },
     model::CounterModel,
 };
 use anyhow::Context;
@@ -215,6 +218,8 @@ pub enum NodeCommand {
 
 /// An event sent from a server or client to the node.
 enum NodeEvent {
+    FilesRequested(Vec<(String, Vec<u8>)>),
+
     RecentServersChanged,
 
     ServerOpened {
@@ -441,7 +446,11 @@ impl Node {
         Ok((node, node_run))
     }
 
-    pub async fn run(self: &Arc<Self>, run_token: NodeRun) -> anyhow::Result<()> {
+    pub async fn run(
+        self: &Arc<Self>,
+        run_token: NodeRun,
+        library: Arc<Library>,
+    ) -> anyhow::Result<()> {
         let NodeRun {
             mut command_rx,
             mut event_rx,
@@ -570,6 +579,12 @@ impl Node {
 
                 Some(event) = event_rx.recv() => {
                     match event {
+                        NodeEvent::FilesRequested(files) => {
+                            if let Err(e) = library.send(LibraryCommand::PrioritizeTranscodes(files.clone())) {
+                                error!("NodeEvent::FilesRequested: failed to send to library: {e:#}");
+                            }
+                        }
+
                         NodeEvent::RecentServersChanged => {
                             self.update_model(NodeModelUpdate::UpdateRecentServers);
                         }
@@ -1689,6 +1704,10 @@ impl Server {
                                         node_id: remote_node_id,
                                         update: ServerModelUpdate::UpdateTransferJobs,
                                     }).expect("failed to send ServerModelUpdate::UpdateTransferJobs");
+
+                                    // prioritize transcodes
+                                    let hashes = files.values().map(|f| (f.hash_kind.clone(), f.hash.clone())).collect::<Vec<_>>();
+                                    self.event_tx.send(NodeEvent::FilesRequested(hashes)).expect("failed to send NodeEvent::FilesRequested");
                                 }
                             }
                         },

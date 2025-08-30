@@ -9,12 +9,15 @@ pub mod node;
 use crate::{
     database::Database,
     error::{CoreError, core_error},
-    library::{Library, LibraryCommand, LibraryModel, transcode::TranscodeStatusCache},
+    library::{
+        Library, LibraryCommand, LibraryModel,
+        transcode::{TranscodePolicy, TranscodeStatusCache},
+    },
     node::{DownloadPartialItemModel, Node, NodeCommand, NodeModel},
 };
 use anyhow::Context;
 use iroh::{NodeAddr, NodeId, SecretKey};
-use log::{debug, error, warn};
+use log::{debug, error};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -41,6 +44,7 @@ pub struct CoreOptions {
     pub init_logging: bool,
     pub in_memory: bool,
     pub project_dirs: Option<ProjectDirsOptions>,
+    pub transcode_policy: TranscodePolicy,
 }
 
 /// Long-lived object created by Compose as the entry point to the Rust core.
@@ -194,6 +198,7 @@ impl Core {
                                 db.clone(),
                                 node_id,
                                 transcodes_dir.clone(),
+                                options.transcode_policy,
                                 transcode_status_cache.clone(),
                             ),
                             Node::new(event_handler, secret_key, db, transcode_status_cache),
@@ -236,8 +241,9 @@ impl Core {
 
                         let mut node_task = tokio::spawn({
                             let node = node.clone();
+                            let library = library.clone();
                             async move {
-                                if let Err(e) = node.run(node_run).await {
+                                if let Err(e) = node.run(node_run, library).await {
                                     error!("core: error running node: {e:#}");
                                 }
                             }
@@ -430,6 +436,13 @@ impl Core {
     pub fn rescan_library(&self) -> Result<(), CoreError> {
         self.library
             .send(LibraryCommand::Rescan)
+            .context("failed to send to library thread")?;
+        Ok(())
+    }
+
+    pub fn set_transcode_policy(&self, transcode_policy: TranscodePolicy) -> Result<(), CoreError> {
+        self.library
+            .send(LibraryCommand::SetTranscodePolicy(transcode_policy))
             .context("failed to send to library thread")?;
         Ok(())
     }

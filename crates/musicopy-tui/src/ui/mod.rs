@@ -3,7 +3,7 @@
 pub mod log;
 
 use crate::app::{App, AppMode, AppScreen};
-use musicopy::node::{ClientStateModel, ServerStateModel, TransferJobProgressModel};
+use musicopy::{library::transcode::TranscodePolicy, node::{ClientStateModel, ServerStateModel, TransferJobProgressModel}};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -247,6 +247,11 @@ impl<'a> App<'a> {
                 ])
             }));
 
+            let transcode_policy = match self.library_model.transcode_policy {
+                TranscodePolicy::IfRequested => "IfRequested",
+                TranscodePolicy::Always => "Always",
+            };
+
             lines.extend(vec![
                 Line::from(""),
                 Line::from(vec![
@@ -274,7 +279,9 @@ impl<'a> App<'a> {
                         .get()
                         .to_string()
                         .green(),
-                    " failed".into(),
+                    " failed (policy: ".into(),
+                    transcode_policy.green(),
+                    ")".into(),
                 ]),
             ])
         }

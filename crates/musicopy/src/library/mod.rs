@@ -3,13 +3,16 @@ pub mod transcode;
 use crate::{
     EventHandler,
     database::{Database, InsertFile},
-    library::transcode::{TranscodeCommand, TranscodeItem, TranscodePool, TranscodeStatusCache},
+    library::transcode::{
+        TranscodeCommand, TranscodeItem, TranscodePolicy, TranscodePool, TranscodeStatusCache,
+    },
     model::CounterModel,
     node::FileSizeModel,
 };
 use anyhow::Context;
 use iroh::NodeId;
 use itertools::Itertools;
+use log::warn;
 use rayon::{iter::Either, prelude::*};
 use std::{
     hash::Hasher,
@@ -46,6 +49,8 @@ pub struct LibraryModel {
     pub transcode_count_inprogress: Arc<CounterModel>,
     pub transcode_count_ready: Arc<CounterModel>,
     pub transcode_count_failed: Arc<CounterModel>,
+
+    pub transcode_policy: TranscodePolicy,
 }
 
 #[derive(Debug)]
@@ -54,6 +59,9 @@ pub enum LibraryCommand {
     RemoveRoot { name: String },
     Rescan,
 
+    PrioritizeTranscodes(Vec<(String, Vec<u8>)>),
+    SetTranscodePolicy(TranscodePolicy),
+
     Stop,
 }
 
@@ -61,6 +69,7 @@ pub enum LibraryCommand {
 enum LibraryModelUpdate {
     UpdateLocalRoots,
     UpdateTranscodesDirSize,
+    SetTranscodePolicy(TranscodePolicy),
 }
 
 pub struct Library {
@@ -98,10 +107,15 @@ impl Library {
         db: Arc<Mutex<Database>>,
         local_node_id: NodeId,
         transcodes_dir: PathBuf,
+        transcode_policy: TranscodePolicy,
         transcode_status_cache: TranscodeStatusCache,
     ) -> anyhow::Result<(Arc<Self>, LibraryRun)> {
         // spawn transcode pool task
-        let transcode_pool = TranscodePool::spawn(transcodes_dir.clone(), transcode_status_cache);
+        let transcode_pool = TranscodePool::spawn(
+            transcodes_dir.clone(),
+            transcode_policy,
+            transcode_status_cache,
+        );
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
@@ -115,6 +129,8 @@ impl Library {
             transcode_count_inprogress: Arc::new(transcode_pool.inprogress_count_model()),
             transcode_count_ready: Arc::new(transcode_pool.ready_count_model()),
             transcode_count_failed: Arc::new(transcode_pool.failed_count_model()),
+
+            transcode_policy,
         };
 
         let library = Arc::new(Self {
@@ -175,6 +191,7 @@ impl Library {
                             // rescan the library
                             self.spawn_scan();
                         }
+
                         LibraryCommand::RemoveRoot { name } => {
                             {
                                 let db = self.db.lock().unwrap();
@@ -189,8 +206,24 @@ impl Library {
                             // rescan the library
                             self.spawn_scan();
                         }
+
                         LibraryCommand::Rescan => {
                             self.spawn_scan();
+                        }
+
+                        LibraryCommand::PrioritizeTranscodes(hashes) => {
+                            if let Err(e) = self.transcode_pool.send(TranscodeCommand::Prioritize(hashes.clone())) {
+                                warn!("LibraryCommand::PrioritizeTranscodes: failed to send to transcode pool: {e:#}");
+                            }
+                        }
+
+                        LibraryCommand::SetTranscodePolicy(transcode_policy) => {
+                            if let Err(e) = self.transcode_pool.send(TranscodeCommand::SetPolicy(transcode_policy)) {
+                                warn!("LibraryCommand::SetTranscodePolicy: failed to send to transcode pool: {e:#}");
+                            }
+
+                            // update model
+                            self.update_model(LibraryModelUpdate::SetTranscodePolicy(transcode_policy));
                         }
 
                         LibraryCommand::Stop => {
@@ -462,6 +495,13 @@ impl Library {
             LibraryModelUpdate::UpdateTranscodesDirSize => {
                 let mut model = self.model.lock().unwrap();
                 model.transcodes_dir_size = self.transcode_pool.transcodes_dir_size();
+
+                self.event_handler.on_library_model_snapshot(model.clone());
+            }
+
+            LibraryModelUpdate::SetTranscodePolicy(transcode_policy) => {
+                let mut model = self.model.lock().unwrap();
+                model.transcode_policy = transcode_policy;
 
                 self.event_handler.on_library_model_snapshot(model.clone());
             }

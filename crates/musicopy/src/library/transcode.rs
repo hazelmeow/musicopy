@@ -3,11 +3,12 @@ use anyhow::Context;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use dashmap::DashMap;
 use image::{ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType};
+use priority_queue::PriorityQueue;
 use rayon::prelude::*;
 use rubato::{FftFixedIn, Resampler};
 use std::{
     borrow::Borrow,
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     fs::File,
     hash::{Hash, Hasher},
     io::{Cursor, Seek, SeekFrom},
@@ -203,34 +204,72 @@ impl Default for TranscodeStatusCache {
 }
 
 /// An item in the transcoding queue.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TranscodeItem {
     pub hash_kind: String,
     pub hash: Vec<u8>,
     pub local_path: PathBuf,
 }
 
+/// When to transcode files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum TranscodePolicy {
+    /// Only transcode files if they are requested.
+    IfRequested,
+    /// Transcode all files ahead of time.
+    Always,
+}
+
 /// The queue of items to be transcoded.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct TranscodeQueue {
-    queue: Arc<Mutex<VecDeque<TranscodeItem>>>,
-    ready: Arc<Condvar>,
+    policy: Mutex<TranscodePolicy>,
+    queue: Mutex<PriorityQueue<TranscodeItem, u64>>,
+    ready: Condvar,
 }
 
 impl TranscodeQueue {
     /// Creates a new TranscodeQueue.
-    pub fn new() -> Self {
+    pub fn new(policy: TranscodePolicy) -> Self {
         TranscodeQueue {
-            queue: Arc::new(Mutex::new(VecDeque::new())),
-            ready: Arc::new(Condvar::new()),
+            policy: Mutex::new(policy),
+            queue: Mutex::new(PriorityQueue::new()),
+            ready: Condvar::new(),
         }
+    }
+
+    /// Sets the transcoding policy.
+    pub fn set_policy(&self, policy: TranscodePolicy) {
+        {
+            let mut policy_guard = self.policy.lock().unwrap();
+            *policy_guard = policy;
+        }
+
+        self.ready.notify_all();
     }
 
     /// Adds items to the queue.
     pub fn extend(&self, items: Vec<TranscodeItem>) {
         {
             let mut queue = self.queue.lock().unwrap();
-            queue.extend(items);
+            queue.extend(items.into_iter().map(|item| (item, 0)));
+        }
+
+        self.ready.notify_all();
+    }
+
+    /// Increases the priority of items in the queue.
+    pub fn prioritize<'a>(&self, hashes: impl Iterator<Item = (&'a str, &'a [u8])>) {
+        let hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(hashes);
+
+        {
+            let mut queue = self.queue.lock().unwrap();
+
+            for (item, priority) in queue.iter_mut() {
+                if hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())) {
+                    *priority += 1;
+                }
+            }
         }
 
         self.ready.notify_all();
@@ -246,7 +285,9 @@ impl TranscodeQueue {
 
         {
             let mut queue = self.queue.lock().unwrap();
-            queue.retain(|item| !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())));
+            queue.retain(|item, _priority| {
+                !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice()))
+            });
         }
     }
 
@@ -255,12 +296,23 @@ impl TranscodeQueue {
         let mut queue = self.queue.lock().unwrap();
         loop {
             // check for a job
-            if let Some(item) = queue.pop_front() {
-                return item;
-            }
+            let next = queue.pop_if(|_item, priority| {
+                let policy = self.policy.lock().unwrap();
+                match *policy {
+                    TranscodePolicy::IfRequested => *priority > 0,
+                    TranscodePolicy::Always => true,
+                }
+            });
 
-            // no job, wait for notification
-            queue = self.ready.wait(queue).unwrap();
+            match next {
+                Some((item, _priority)) => {
+                    return item;
+                }
+                None => {
+                    // no job, wait for notification
+                    queue = self.ready.wait(queue).unwrap();
+                }
+            }
         }
     }
 }
@@ -277,7 +329,7 @@ pub enum TranscodeCommand {
     /// Increase the priority of some files. Sent when files are requested.
     /// This is useful for partial downloads when the library isn't fully
     /// transcoded yet.
-    Prioritize(Vec<u64>),
+    Prioritize(Vec<(String, Vec<u8>)>),
 
     /// Sent when files are removed from the library. Files are dequeued if
     /// they are currently queued for transcoding.
@@ -285,6 +337,9 @@ pub enum TranscodeCommand {
 
     /// Delete transcodes of files that aren't in the library anymore.
     CollectGarbage(Vec<u64>),
+
+    /// Set the transcode policy.
+    SetPolicy(TranscodePolicy),
 }
 
 /// A handle to a pool of worker threads for transcoding files.
@@ -302,7 +357,11 @@ impl TranscodePool {
     ///
     /// The transcode status cache is guaranteed to be populated after this
     /// returns.
-    pub fn spawn(transcodes_dir: PathBuf, status_cache: TranscodeStatusCache) -> Self {
+    pub fn spawn(
+        transcodes_dir: PathBuf,
+        policy: TranscodePolicy,
+        status_cache: TranscodeStatusCache,
+    ) -> Self {
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Self::read_transcodes_dir(&transcodes_dir, &status_cache);
@@ -314,8 +373,14 @@ impl TranscodePool {
             let status_cache = status_cache.clone();
             let inprogress_counter = inprogress_counter.clone();
             async move {
-                if let Err(e) =
-                    Self::run(transcodes_dir, status_cache, inprogress_counter, command_rx).await
+                if let Err(e) = Self::run(
+                    transcodes_dir,
+                    policy,
+                    status_cache,
+                    inprogress_counter,
+                    command_rx,
+                )
+                .await
                 {
                     log::error!("error running transcode pool: {e:#}");
                 }
@@ -444,11 +509,12 @@ impl TranscodePool {
 
     async fn run(
         transcodes_dir: PathBuf,
+        initial_policy: TranscodePolicy,
         status_cache: TranscodeStatusCache,
         inprogress_counter: RegionCounter,
         mut rx: mpsc::UnboundedReceiver<TranscodeCommand>,
     ) -> anyhow::Result<()> {
-        let queue = TranscodeQueue::new();
+        let queue = Arc::new(TranscodeQueue::new(initial_policy));
 
         // spawn transcode workers
         // TODO
@@ -518,10 +584,11 @@ impl TranscodePool {
                                 queue.extend(items);
                             }
                         },
+
                         TranscodeCommand::Prioritize(items) => {
-                            // TODO: switch to a priority queue
-                            todo!()
+                            queue.prioritize(items.iter().map(|(kind, hash)| (kind.as_str(), hash.as_slice())));
                         },
+
                         TranscodeCommand::Remove(items) => {
                             // clear statuses for items that are Queued
                             // if Ready or Failed they are left in the cache
@@ -532,7 +599,12 @@ impl TranscodePool {
                             // remove items from queue
                             queue.remove(items);
                         },
+
                         TranscodeCommand::CollectGarbage(items) => todo!(),
+
+                        TranscodeCommand::SetPolicy(policy) => {
+                            queue.set_policy(policy);
+                        }
                     }
                 }
             }
@@ -592,7 +664,7 @@ impl TranscodeWorker {
     pub fn new(
         transcodes_dir: PathBuf,
         status_cache: TranscodeStatusCache,
-        queue: TranscodeQueue,
+        queue: Arc<TranscodeQueue>,
         inprogress_counter: RegionCounter,
     ) -> Self {
         std::thread::spawn(move || {
@@ -608,7 +680,7 @@ impl TranscodeWorker {
     fn run(
         transcodes_dir: PathBuf,
         status_cache: TranscodeStatusCache,
-        queue: TranscodeQueue,
+        queue: Arc<TranscodeQueue>,
         inprogress_counter: RegionCounter,
     ) -> anyhow::Result<()> {
         loop {
@@ -1290,6 +1362,8 @@ fn estimate_file_size(path: &PathBuf) -> anyhow::Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::atomic::AtomicBool, time::Duration};
+
     use super::*;
 
     fn test_item(hash: u8) -> TranscodeItem {
@@ -1313,6 +1387,57 @@ mod tests {
         panic!("thread timed out");
     }
 
+    /// Asserts that a condition is true for a given duration.
+    fn assert_duration(timeout: std::time::Duration, condition: impl Fn() -> bool) {
+        let now = std::time::Instant::now();
+
+        while now.elapsed() < timeout {
+            if !condition() {
+                panic!("condition failed before timeout");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn test_assert_duration_success() {
+        let flag = Arc::new(AtomicBool::new(true));
+
+        // set flag to false after 200ms
+        std::thread::spawn({
+            let flag = flag.clone();
+            move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                flag.store(false, Ordering::SeqCst);
+            }
+        });
+
+        // should remain true for 100ms
+        assert_duration(std::time::Duration::from_millis(100), || {
+            flag.load(Ordering::SeqCst)
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_assert_duration_panic() {
+        let flag = Arc::new(AtomicBool::new(true));
+
+        // set flag to false after 50ms
+        std::thread::spawn({
+            let flag = flag.clone();
+            move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                flag.store(false, Ordering::SeqCst);
+            }
+        });
+
+        // should become false before 100ms and panic
+        assert_duration(std::time::Duration::from_millis(100), || {
+            flag.load(Ordering::SeqCst)
+        });
+    }
+
     #[test]
     fn test_region_counter() {
         let counter = RegionCounter::new();
@@ -1333,7 +1458,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_after() {
-        let queue = TranscodeQueue::new();
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
 
         // add to queue
         let item_1 = test_item(0x01);
@@ -1355,7 +1480,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_before() {
-        let queue = TranscodeQueue::new();
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
 
         // wait before before item
         let thread = std::thread::spawn({
@@ -1380,7 +1505,7 @@ mod tests {
 
     #[test]
     fn test_queue_wait_parallel() {
-        let queue = TranscodeQueue::new();
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
 
         // spawn consumer threads
         let thread_1 = std::thread::spawn({
@@ -1409,7 +1534,7 @@ mod tests {
 
     #[test]
     fn test_queue_remove() {
-        let queue = TranscodeQueue::new();
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
 
         // add to queue
         let item_1 = test_item(0x01);
@@ -1427,5 +1552,125 @@ mod tests {
         // wait for next
         let item = queue.wait();
         assert_eq!(item.hash, vec![0x03]);
+    }
+
+    #[test]
+    fn test_queue_if_requested() {
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::IfRequested));
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        // spawn consumer thread
+        let thread_1 = std::thread::spawn({
+            let queue = queue.clone();
+            move || queue.wait()
+        });
+
+        // should wait and not receive item
+        assert_duration(Duration::from_millis(100), || !thread_1.is_finished());
+
+        // request #2
+        queue.prioritize(
+            [item_2]
+                .iter()
+                .map(|i| (i.hash_kind.as_ref(), i.hash.as_slice())),
+        );
+
+        // should receive #2
+        let item = thread_1.join().unwrap();
+        assert_eq!(item.hash, vec![0x02]);
+
+        // spawn another consumer thread
+        let thread_2 = std::thread::spawn({
+            let queue = queue.clone();
+            move || queue.wait()
+        });
+
+        // should wait and not receive item
+        assert_duration(Duration::from_millis(100), || !thread_2.is_finished());
+
+        // request #3
+        queue.prioritize(
+            [item_3]
+                .iter()
+                .map(|i| (i.hash_kind.as_ref(), i.hash.as_slice())),
+        );
+
+        // should receive #3
+        let item = thread_2.join().unwrap();
+        assert_eq!(item.hash, vec![0x03]);
+    }
+
+    #[test]
+    fn test_queue_change_policy_to_always() {
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::IfRequested));
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        // spawn consumer thread to wait for 3 items
+        let thread_1 = std::thread::spawn({
+            let queue = queue.clone();
+            move || {
+                queue.wait();
+                queue.wait();
+                queue.wait();
+            }
+        });
+
+        // should wait and not receive item
+        assert_duration(Duration::from_millis(100), || !thread_1.is_finished());
+
+        // change policy to Always
+        queue.set_policy(TranscodePolicy::Always);
+
+        // should receive items and exit
+        join_timeout(Duration::from_millis(100), thread_1);
+    }
+
+    #[test]
+    fn test_queue_change_policy_to_if_requested() {
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        // should receive some item
+        queue.wait();
+
+        // change policy to IfRequested
+        queue.set_policy(TranscodePolicy::IfRequested);
+
+        // spawn consumer thread to wait for 2 more items
+        let thread_1 = std::thread::spawn({
+            let queue = queue.clone();
+            move || {
+                queue.wait();
+                queue.wait();
+            }
+        });
+
+        // should wait and not receive item
+        assert_duration(Duration::from_millis(100), || !thread_1.is_finished());
+
+        // request all
+        queue.prioritize(
+            [item_1, item_2, item_3]
+                .iter()
+                .map(|i| (i.hash_kind.as_ref(), i.hash.as_slice())),
+        );
+
+        // should receive items and exit
+        join_timeout(Duration::from_millis(100), thread_1);
     }
 }
