@@ -47,21 +47,20 @@ fun JobsWidget(
 ) {
     val activeServers = nodeModel.servers.values.filter { it.state is ServerStateModel.Accepted }
 
-    var transcodesNotReady by remember { mutableStateOf(0) }
+    var transcodesVisible by remember { mutableStateOf(false) }
     LaunchedEffect(true) {
         while (isActive) {
             val countQueued = libraryModel.transcodeCountQueued.get()
             val countInProgress = libraryModel.transcodeCountInprogress.get()
             val countFailed = libraryModel.transcodeCountFailed.get()
 
-            transcodesNotReady =
-                (countQueued + countInProgress + countFailed).toInt()
+            transcodesVisible = countQueued > 0uL || countInProgress > 0uL || countFailed > 0uL
 
             delay(100)
         }
     }
 
-    val visible = activeServers.isNotEmpty() || transcodesNotReady > 0
+    val visible = activeServers.isNotEmpty() || transcodesVisible
 
     AnimatedVisibility(visible = visible) {
         WidgetContainer(
@@ -71,7 +70,7 @@ fun JobsWidget(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                AnimatedVisibility(transcodesNotReady > 0) {
+                AnimatedVisibility(transcodesVisible) {
                     TranscodeJob(libraryModel)
                 }
 
@@ -119,36 +118,35 @@ private fun TranscodeJob(library: LibraryModel) {
 
     val countRemaining = countQueued + countInProgress
 
-    Job(
-        labelLeft = {
-            if (countRemaining > 0) {
+    if (countRemaining > 0) {
+        Job(
+            labelLeft = {
                 Text(
                     "Transcoding $countRemaining files",
                     style = MaterialTheme.typography.labelLarge
                 )
-            } else {
+            },
+            body = {
+                Column {
+                    Text(
+                        "$countInProgress in progress, $countQueued queued",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        )
+    }
+
+    if (countFailed > 0) {
+        Job(
+            labelLeft = {
                 Text(
                     "Failed to transcode $countFailed files",
                     style = MaterialTheme.typography.labelLarge
                 )
             }
-        },
-        body = {
-            Column {
-                Text(
-                    "$countInProgress in progress, $countQueued queued",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                if (countFailed > 0) {
-                    Text(
-                        "$countFailed failed",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
-    )
+        )
+    }
 }
 
 @Composable
@@ -205,17 +203,17 @@ private fun ActiveTransferJob(connection: ServerModel) {
         },
         body = {
             Column {
+                Text(
+                    "$countFinished finished, $countRemaining remaining",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
                 if (countTranscoding > 0) {
                     Text(
                         "$countTranscoding transcoding",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-
-                Text(
-                    "$countRemaining remaining",
-                    style = MaterialTheme.typography.bodyMedium
-                )
 
                 if (countFailed > 0) {
                     Text(
