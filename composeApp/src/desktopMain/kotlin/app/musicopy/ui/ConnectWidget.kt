@@ -287,7 +287,7 @@ private fun DownloadAppDialog(
                     ) {
                         Image(
                             painter = rememberQrCodePainter(
-                                QrData.text("https://download.musicopy.app")
+                                QrData.text("https://musicopy.app/download")
                             ),
                             contentDescription = "QR code containing download link",
                             modifier = Modifier.widthIn(max = 120.dp)
@@ -302,11 +302,11 @@ private fun DownloadAppDialog(
 
                         TextButton(
                             onClick = {
-                                uriHandler.openUri("https://download.musicopy.app")
+                                uriHandler.openUri("https://musicopy.app/download")
                             },
                         ) {
                             Text(
-                                text = "download.musicopy.app",
+                                text = "musicopy.app/download",
                                 modifier = Modifier.padding(end = 4.dp)
                             )
 
