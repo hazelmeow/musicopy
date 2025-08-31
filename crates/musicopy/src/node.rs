@@ -1474,7 +1474,7 @@ impl Server {
                             };
 
                             match &*status {
-                                TranscodeStatus::Queued { .. } => {
+                                TranscodeStatus::Waiting { .. } => {
                                     // job is still queued
                                 }
 
@@ -1641,7 +1641,7 @@ impl Server {
                                         };
 
                                         match &*transcode_status {
-                                            TranscodeStatus::Queued { .. } => {
+                                            TranscodeStatus::Waiting { .. } => {
                                                 // file is queued for transcoding
 
                                                 // create job
@@ -1835,7 +1835,7 @@ impl Server {
                                 .transcode_status_cache
                                 .get(&item.hash_kind, &item.hash)
                                 .and_then(|entry| match &*entry {
-                                    TranscodeStatus::Queued { estimated_size } => estimated_size.map(FileSize::Estimated),
+                                    TranscodeStatus::Waiting { estimated_size } => estimated_size.map(FileSize::Estimated),
                                     TranscodeStatus::Ready { file_size, .. } => Some(FileSize::Actual(*file_size)),
                                     _ => None,
                                 });
@@ -1888,7 +1888,7 @@ impl Server {
                     .transcode_status_cache
                     .get(&file.hash_kind, &file.hash)
                     .and_then(|entry| match &*entry {
-                        TranscodeStatus::Queued { estimated_size } => {
+                        TranscodeStatus::Waiting { estimated_size } => {
                             estimated_size.map(FileSize::Estimated)
                         }
                         TranscodeStatus::Ready { file_size, .. } => {

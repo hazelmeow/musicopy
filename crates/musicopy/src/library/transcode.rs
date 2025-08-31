@@ -29,8 +29,16 @@ use tokio::sync::mpsc;
 /// The transcode status of a file.
 #[derive(Debug)]
 pub enum TranscodeStatus {
-    Queued { estimated_size: Option<u64> },
+    /// The file is waiting to be transcoded.
+    ///
+    /// The file might be queued for transcoding, in progress, or waiting to be
+    /// requested if the transcode policy is `IfRequested`.
+    Waiting { estimated_size: Option<u64> },
+
+    /// The file is transcoded and available at `local_path`.
     Ready { local_path: PathBuf, file_size: u64 },
+
+    /// Transcoding the file failed.
     Failed { error: anyhow::Error },
 }
 
@@ -117,7 +125,7 @@ impl Deref for TranscodeStatusCacheEntry<'_> {
 pub struct TranscodeStatusCache {
     cache: Arc<DashMap<(String, Vec<u8>), TranscodeStatus>>,
 
-    queued_counter: Arc<AtomicU64>,
+    waiting_counter: Arc<AtomicU64>,
     ready_counter: Arc<AtomicU64>,
     failed_counter: Arc<AtomicU64>,
 }
@@ -128,7 +136,7 @@ impl TranscodeStatusCache {
         TranscodeStatusCache {
             cache: Arc::new(DashMap::new()),
 
-            queued_counter: Arc::new(AtomicU64::new(0)),
+            waiting_counter: Arc::new(AtomicU64::new(0)),
             ready_counter: Arc::new(AtomicU64::new(0)),
             failed_counter: Arc::new(AtomicU64::new(0)),
         }
@@ -144,8 +152,8 @@ impl TranscodeStatusCache {
     /// Inserts a key and a value into the cache, replacing the old value.
     pub fn insert(&self, hash_kind: String, hash: Vec<u8>, status: TranscodeStatus) {
         match status {
-            TranscodeStatus::Queued { .. } => {
-                self.queued_counter.fetch_add(1, Ordering::Relaxed);
+            TranscodeStatus::Waiting { .. } => {
+                self.waiting_counter.fetch_add(1, Ordering::Relaxed);
             }
             TranscodeStatus::Ready { .. } => {
                 self.ready_counter.fetch_add(1, Ordering::Relaxed);
@@ -158,8 +166,8 @@ impl TranscodeStatusCache {
         let prev = self.cache.insert((hash_kind, hash), status);
 
         match prev {
-            Some(TranscodeStatus::Queued { .. }) => {
-                self.queued_counter.fetch_sub(1, Ordering::Relaxed);
+            Some(TranscodeStatus::Waiting { .. }) => {
+                self.waiting_counter.fetch_sub(1, Ordering::Relaxed);
             }
             Some(TranscodeStatus::Ready { .. }) => {
                 self.ready_counter.fetch_sub(1, Ordering::Relaxed);
@@ -171,21 +179,21 @@ impl TranscodeStatusCache {
         }
     }
 
-    /// Removes an entry from the cache if the condition is true.
-    pub fn remove_queued(&self, hash_kind: &str, hash: &[u8]) {
+    /// Removes an entry from the cache if the status is Waiting.
+    pub fn remove_waiting(&self, hash_kind: &str, hash: &[u8]) {
         let prev = self
             .cache
             .remove_if(&(hash_kind, hash) as &dyn HashKey, |_, status| {
-                matches!(status, TranscodeStatus::Queued { .. })
+                matches!(status, TranscodeStatus::Waiting { .. })
             });
 
         if prev.is_some() {
-            self.queued_counter.fetch_sub(1, Ordering::Relaxed);
+            self.waiting_counter.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
-    pub fn queued_counter(&self) -> &Arc<AtomicU64> {
-        &self.queued_counter
+    pub fn waiting_counter(&self) -> &Arc<AtomicU64> {
+        &self.waiting_counter
     }
 
     pub fn ready_counter(&self) -> &Arc<AtomicU64> {
@@ -226,6 +234,7 @@ struct TranscodeQueue {
     policy: Mutex<TranscodePolicy>,
     queue: Mutex<PriorityQueue<TranscodeItem, u64>>,
     ready: Condvar,
+    ready_counter: Arc<AtomicU64>,
 }
 
 impl TranscodeQueue {
@@ -235,48 +244,101 @@ impl TranscodeQueue {
             policy: Mutex::new(policy),
             queue: Mutex::new(PriorityQueue::new()),
             ready: Condvar::new(),
+            ready_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
     /// Sets the transcoding policy.
     pub fn set_policy(&self, policy: TranscodePolicy) {
+        // update policy
         {
             let mut policy_guard = self.policy.lock().unwrap();
             *policy_guard = policy;
         }
 
+        {
+            let queue = self.queue.lock().unwrap();
+
+            // update ready counter by re-counting queue
+            let ready_count = match policy {
+                TranscodePolicy::IfRequested => queue.iter().filter(|entry| *entry.1 > 0).count(),
+                TranscodePolicy::Always => queue.len(),
+            };
+            self.ready_counter
+                .store(ready_count as u64, Ordering::Relaxed);
+        }
+
+        // notify waiting consumers
         self.ready.notify_all();
     }
 
     /// Adds items to the queue.
     pub fn extend(&self, items: Vec<TranscodeItem>) {
+        // read policy before locking queue
+        let policy = {
+            let policy = self.policy.lock().unwrap();
+            *policy
+        };
+
         {
+            // extend queue
             let mut queue = self.queue.lock().unwrap();
             queue.extend(items.into_iter().map(|item| (item, 0)));
+
+            // update ready counter by re-counting queue
+            let ready_count = match policy {
+                TranscodePolicy::IfRequested => queue.iter().filter(|entry| *entry.1 > 0).count(),
+                TranscodePolicy::Always => queue.len(),
+            };
+            self.ready_counter
+                .store(ready_count as u64, Ordering::Relaxed);
         }
 
+        // notify waiting consumers
         self.ready.notify_all();
     }
 
     /// Increases the priority of items in the queue.
     pub fn prioritize<'a>(&self, hashes: impl Iterator<Item = (&'a str, &'a [u8])>) {
+        // read policy before locking queue
+        let policy = {
+            let policy = self.policy.lock().unwrap();
+            *policy
+        };
+
         let hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(hashes);
 
         {
             let mut queue = self.queue.lock().unwrap();
 
+            // increase priority
             for (item, priority) in queue.iter_mut() {
                 if hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice())) {
                     *priority += 1;
                 }
             }
+
+            // update ready counter by re-counting queue
+            let ready_count = match policy {
+                TranscodePolicy::IfRequested => queue.iter().filter(|entry| *entry.1 > 0).count(),
+                TranscodePolicy::Always => queue.len(),
+            };
+            self.ready_counter
+                .store(ready_count as u64, Ordering::Relaxed);
         }
 
+        // notify waiting consumers
         self.ready.notify_all();
     }
 
     /// Removes items from the queue.
     pub fn remove(&self, items: Vec<TranscodeItem>) {
+        // read policy before locking queue
+        let policy = {
+            let policy = self.policy.lock().unwrap();
+            *policy
+        };
+
         let hashes: HashSet<(&str, &[u8])> = HashSet::from_iter(
             items
                 .iter()
@@ -284,10 +346,19 @@ impl TranscodeQueue {
         );
 
         {
+            // remove items from queue
             let mut queue = self.queue.lock().unwrap();
             queue.retain(|item, _priority| {
                 !hashes.contains(&(item.hash_kind.as_str(), item.hash.as_slice()))
             });
+
+            // update ready counter by re-counting queue
+            let ready_count = match policy {
+                TranscodePolicy::IfRequested => queue.iter().filter(|entry| *entry.1 > 0).count(),
+                TranscodePolicy::Always => queue.len(),
+            };
+            self.ready_counter
+                .store(ready_count as u64, Ordering::Relaxed);
         }
     }
 
@@ -306,6 +377,9 @@ impl TranscodeQueue {
 
             match next {
                 Some((item, _priority)) => {
+                    // decrease ready counter
+                    self.ready_counter.fetch_sub(1, Ordering::Relaxed);
+
                     return item;
                 }
                 None => {
@@ -347,6 +421,7 @@ pub struct TranscodePool {
     transcodes_dir: PathBuf,
     status_cache: TranscodeStatusCache,
 
+    queue: Arc<TranscodeQueue>,
     inprogress_counter: RegionCounter,
 
     command_tx: mpsc::UnboundedSender<TranscodeCommand>,
@@ -359,24 +434,27 @@ impl TranscodePool {
     /// returns.
     pub fn spawn(
         transcodes_dir: PathBuf,
-        policy: TranscodePolicy,
+        initial_policy: TranscodePolicy,
         status_cache: TranscodeStatusCache,
     ) -> Self {
-        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
-
+        // initialize status cache
         Self::read_transcodes_dir(&transcodes_dir, &status_cache);
 
+        let queue = Arc::new(TranscodeQueue::new(initial_policy));
         let inprogress_counter = RegionCounter::new();
+
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
 
         tokio::spawn({
             let transcodes_dir = transcodes_dir.clone();
             let status_cache = status_cache.clone();
+            let queue = queue.clone();
             let inprogress_counter = inprogress_counter.clone();
             async move {
                 if let Err(e) = Self::run(
                     transcodes_dir,
-                    policy,
                     status_cache,
+                    queue,
                     inprogress_counter,
                     command_rx,
                 )
@@ -390,6 +468,7 @@ impl TranscodePool {
         TranscodePool {
             transcodes_dir,
             status_cache,
+            queue,
 
             inprogress_counter,
 
@@ -509,13 +588,11 @@ impl TranscodePool {
 
     async fn run(
         transcodes_dir: PathBuf,
-        initial_policy: TranscodePolicy,
         status_cache: TranscodeStatusCache,
+        queue: Arc<TranscodeQueue>,
         inprogress_counter: RegionCounter,
         mut rx: mpsc::UnboundedReceiver<TranscodeCommand>,
     ) -> anyhow::Result<()> {
-        let queue = Arc::new(TranscodeQueue::new(initial_policy));
-
         // spawn transcode workers
         // TODO
         for _ in 0..8 {
@@ -540,7 +617,7 @@ impl TranscodePool {
                                     return false;
                                 }
 
-                                // remove items that are already queued/transcoded/failed
+                                // remove items that are already waiting/transcoded/failed
                                 let status = status_cache.get(&item.hash_kind, &item.hash);
                                 match status {
                                     Some(status) => {
@@ -569,14 +646,14 @@ impl TranscodePool {
                                     (items, estimated_sizes)
                                 }).await.context("failed to join file size task")?;
 
-                                // set statuses to Queued
+                                // set statuses to Waiting
                                 for (i, item) in items.iter().enumerate() {
                                     let estimated_size = estimated_sizes[i];
 
                                     status_cache.insert(
                                         item.hash_kind.clone(),
                                         item.hash.clone(),
-                                        TranscodeStatus::Queued { estimated_size },
+                                        TranscodeStatus::Waiting { estimated_size },
                                     );
                                 }
 
@@ -590,10 +667,10 @@ impl TranscodePool {
                         },
 
                         TranscodeCommand::Remove(items) => {
-                            // clear statuses for items that are Queued
+                            // clear statuses for items that are Waiting
                             // if Ready or Failed they are left in the cache
                             for item in &items {
-                                status_cache.remove_queued(&item.hash_kind, &item.hash);
+                                status_cache.remove_waiting(&item.hash_kind, &item.hash);
                             }
 
                             // remove items from queue
@@ -625,7 +702,7 @@ impl TranscodePool {
         let (size, estimated) = self.status_cache.cache.iter().fold(
             (0, false),
             |(acc_size, acc_estimated), e| match &*e {
-                TranscodeStatus::Queued { estimated_size } => {
+                TranscodeStatus::Waiting { estimated_size } => {
                     (acc_size + estimated_size.unwrap_or(0), true)
                 }
                 TranscodeStatus::Ready { file_size, .. } => (acc_size + file_size, acc_estimated),
@@ -640,8 +717,12 @@ impl TranscodePool {
         }
     }
 
+    pub fn waiting_count_model(&self) -> CounterModel {
+        CounterModel::from(&self.status_cache.waiting_counter)
+    }
+
     pub fn queued_count_model(&self) -> CounterModel {
-        CounterModel::from(&self.status_cache.queued_counter)
+        CounterModel::from(&self.queue.ready_counter)
     }
 
     pub fn inprogress_count_model(&self) -> CounterModel {
@@ -1672,5 +1753,50 @@ mod tests {
 
         // should receive items and exit
         join_timeout(Duration::from_millis(100), thread_1);
+    }
+
+    #[test]
+    fn test_queue_ready_count() {
+        let queue = Arc::new(TranscodeQueue::new(TranscodePolicy::Always));
+
+        // should have 0 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 0);
+
+        // add to queue
+        let item_1 = test_item(0x01);
+        let item_2 = test_item(0x02);
+        let item_3 = test_item(0x03);
+        queue.extend(vec![item_1.clone(), item_2.clone(), item_3.clone()]);
+
+        // should have 3 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 3);
+
+        // should receive some item
+        queue.wait();
+
+        // should have 2 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 2);
+
+        // change policy to IfRequested
+        queue.set_policy(TranscodePolicy::IfRequested);
+
+        // should have 0 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 0);
+
+        // request #2
+        queue.prioritize(
+            [item_2]
+                .iter()
+                .map(|i| (i.hash_kind.as_ref(), i.hash.as_slice())),
+        );
+
+        // should have 1 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 1);
+
+        // should receive some item
+        queue.wait();
+
+        // should have 0 ready
+        assert_eq!(queue.ready_counter.load(Ordering::SeqCst), 0);
     }
 }

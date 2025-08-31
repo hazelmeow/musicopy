@@ -3,7 +3,10 @@
 pub mod log;
 
 use crate::app::{App, AppMode, AppScreen};
-use musicopy::{library::transcode::TranscodePolicy, node::{ClientStateModel, ServerStateModel, TransferJobProgressModel}};
+use musicopy::{
+    library::transcode::TranscodePolicy,
+    node::{ClientStateModel, ServerStateModel, TransferJobProgressModel},
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -256,6 +259,12 @@ impl<'a> App<'a> {
                 Line::from(""),
                 Line::from(vec![
                     "Transcodes: ".into(),
+                    self.library_model
+                        .transcode_count_waiting
+                        .get()
+                        .to_string()
+                        .green(),
+                    " waiting / ".into(),
                     self.library_model
                         .transcode_count_queued
                         .get()

@@ -45,6 +45,7 @@ pub struct LibraryModel {
     pub transcodes_dir: String,
     pub transcodes_dir_size: FileSizeModel,
 
+    pub transcode_count_waiting: Arc<CounterModel>,
     pub transcode_count_queued: Arc<CounterModel>,
     pub transcode_count_inprogress: Arc<CounterModel>,
     pub transcode_count_ready: Arc<CounterModel>,
@@ -125,6 +126,7 @@ impl Library {
             transcodes_dir: transcode_pool.transcodes_dir(),
             transcodes_dir_size: transcode_pool.transcodes_dir_size(),
 
+            transcode_count_waiting: Arc::new(transcode_pool.waiting_count_model()),
             transcode_count_queued: Arc::new(transcode_pool.queued_count_model()),
             transcode_count_inprogress: Arc::new(transcode_pool.inprogress_count_model()),
             transcode_count_ready: Arc::new(transcode_pool.ready_count_model()),
