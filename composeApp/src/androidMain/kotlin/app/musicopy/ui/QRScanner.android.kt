@@ -1,23 +1,29 @@
 package app.musicopy.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 @Composable
 actual fun QRScanner(onResult: (String) -> Unit) {
-    val context = LocalContext.current
-    var result by remember { mutableStateOf("") }
+    var resultText by remember { mutableStateOf<String?>(null) }
 
-    Button(onClick = {
+    val context = LocalContext.current
+    val startScan = {
         val options = GmsBarcodeScannerOptions.Builder()
             .setBarcodeFormats(
                 Barcode.FORMAT_QR_CODE,
@@ -28,21 +34,41 @@ actual fun QRScanner(onResult: (String) -> Unit) {
 
         scanner.startScan()
             .addOnSuccessListener { barcode ->
-                result = barcode.rawValue ?: ""
+                // clear result text
+                resultText = null
 
+                // call callback
+                val result = barcode.rawValue ?: ""
                 onResult(result)
-                // Task completed successfully
             }
             .addOnCanceledListener {
-                // Task canceled
-                result = "cancelled"
+                // clear result text
+                resultText = null
             }
             .addOnFailureListener { e ->
-                // Task failed with an exception
-                result = "error: ${e}"
+                // show error text
+                resultText = "Error: $e"
             }
-    }) {
-        Text("Scan QR code")
-        Text("Result: ${result}")
+    }
+
+    LaunchedEffect(true) {
+        startScan()
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(onClick = { startScan() }) {
+            Text("Scan")
+        }
+
+        resultText?.let { resultText ->
+            Text(
+                text = resultText,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
     }
 }
