@@ -67,11 +67,11 @@ jobs:
           alias: ${{ secrets.SIGNING_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
           keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        
+
       - name: Upload app
         uses: r0adkll/upload-google-play@v1
         with:
-          releaseFiles: composeApp/build/outputs/bundle/release/composeApp-release.aab
+          releaseFiles: composeApp/build/outputs/bundle/release/musicopy-release.aab
           serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           packageName: app.musicopy
           track: internal
