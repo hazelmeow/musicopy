@@ -314,6 +314,26 @@ impl Database {
         .collect()
     }
 
+    pub fn exists_file_by_node_root_path(
+        &self,
+        node_id: NodeId,
+        root: &str,
+        path: &str,
+    ) -> anyhow::Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM files WHERE node_id = ? AND root = ? AND path = ? LIMIT 1")
+            .expect("should prepare statement");
+
+        let node_id = node_id_to_string(&node_id);
+        let exists: Option<u8> = stmt
+            .query_row([&node_id, root, path], |row| row.get(0))
+            .optional()
+            .context("failed to query row")?;
+
+        Ok(exists.is_some())
+    }
+
     pub fn get_file_by_node_root_path(
         &self,
         node_id: NodeId,

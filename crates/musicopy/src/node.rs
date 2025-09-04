@@ -120,6 +120,8 @@ pub struct IndexItemModel {
     pub hash: Vec<u8>,
 
     pub file_size: FileSizeModel,
+
+    pub downloaded: bool,
 }
 
 /// Model of the state of a client connection.
@@ -928,32 +930,44 @@ impl Node {
                             return;
                         };
 
-                        let index = client_handle.index.lock().unwrap();
-                        let index = index.as_ref().map(|index| {
-                            index
-                                .iter()
-                                .map(|item| IndexItemModel {
-                                    node_id: node_id.to_string(),
-                                    root: item.root.clone(),
-                                    path: item.path.clone(),
+                        let index = client_handle.index.lock().unwrap().as_ref().cloned();
+                        if let Some(index) = index {
+                            let db = self.db.lock().unwrap();
 
-                                    hash_kind: item.hash_kind.clone(),
-                                    hash: item.hash.clone(),
+                            let index = index
+                                .into_iter()
+                                .map(|item| {
+                                    // check if file is downloaded
+                                    let downloaded = db
+                                        .exists_file_by_node_root_path(
+                                            node_id, &item.root, &item.path,
+                                        )
+                                        .unwrap_or(false);
+
+                                    IndexItemModel {
+                                    node_id: node_id.to_string(),
+                                        root: item.root,
+                                        path: item.path,
+
+                                        hash_kind: item.hash_kind,
+                                        hash: item.hash,
 
                                     file_size: match item.file_size {
                                         FileSize::Unknown => FileSizeModel::Unknown,
                                         FileSize::Estimated(n) => FileSizeModel::Estimated(n),
                                         FileSize::Actual(n) => FileSizeModel::Actual(n),
                                     },
+
+                                        downloaded,
+                                    }
                                 })
-                                .collect()
-                        });
+                                .collect();
 
-                        if index.is_none() {
+                            client.index = Some(index);
+                        } else {
                             log::warn!("ClientModelUpdate::UpdateIndex: no index found");
+                            client.index = None;
                         }
-
-                        client.index = index;
                     }
                     ClientModelUpdate::UpdateTransferJobs => {
                         let client_handles = self.clients.lock().unwrap();
