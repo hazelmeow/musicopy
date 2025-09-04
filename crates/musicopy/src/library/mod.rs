@@ -400,6 +400,7 @@ impl Library {
                     hash: &item.hash,
                     root: &item.root,
                     path: &item.path,
+                    local_tree: "", // local_tree is only used for remote files
                     local_path: &item.local_path,
                 }),
             )

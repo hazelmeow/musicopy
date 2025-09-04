@@ -10,7 +10,7 @@
 
 use crate::{
     EventHandler,
-    database::Database,
+    database::{Database, InsertFile},
     fs::{OpenMode, TreeFile, TreePath},
     library::{
         Library, LibraryCommand,
@@ -1919,6 +1919,8 @@ impl Server {
 struct ClientTransferJob {
     progress: ClientTransferJobProgress,
 
+    file_hash_kind: String,
+    file_hash: Vec<u8>,
     file_node_id: NodeId,
     file_root: String,
     file_path: String,
@@ -1990,6 +1992,7 @@ impl Client {
         // Client::run() receives ServerMessage::JobStatus messages. jobs marked Ready are sent to this channel
         let (ready_tx, mut ready_rx) = mpsc::unbounded_channel::<u64>();
         tokio::spawn({
+            let db = db.clone();
             let jobs = jobs.clone();
             let event_tx = event_tx.clone();
             let connection = connection.clone();
@@ -2010,6 +2013,7 @@ impl Client {
                             download_directory.clone()
                         };
 
+                        let db = db.clone();
                         let jobs = jobs.clone();
                         let event_tx = event_tx.clone();
                         let connection = connection.clone();
@@ -2023,12 +2027,14 @@ impl Client {
                             };
 
                             // check job exists and get details
-                            let (file_node_id, file_root, file_path) = {
+                            let (file_hash_kind, file_hash, file_node_id, file_root, file_path) = {
                                 let Some(job) = jobs.get(&job_id) else {
                                     anyhow::bail!("received ready for unknown job ID {job_id}");
                                 };
 
                                 (
+                                    job.file_hash_kind.clone(),
+                                    job.file_hash.clone(),
                                     job.file_node_id,
                                     job.file_root.clone(),
                                     job.file_path.clone(),
@@ -2124,6 +2130,23 @@ impl Client {
                             tokio::io::copy(&mut recv.take(file_size), &mut file_progress).await?;
 
                             // TODO: handle errors above and update job status
+
+                            // insert or update file in database
+                            {
+                                let mut db = db.lock().unwrap();
+                                db.insert_remote_file(
+                                    remote_node_id,
+                                    InsertFile {
+                                        hash_kind: &file_hash_kind,
+                                        hash: &file_hash,
+                                        root: &file_root,
+                                        path: &file_path,
+                                        local_tree: local_path.root(),
+                                        local_path: &local_path.path(),
+                                    },
+                                )
+                                .context("failed to insert remote file in database")?;
+                            }
 
                             // set job status to Finished
                             jobs.alter(&job_id, |_, mut job| {
@@ -2344,6 +2367,7 @@ impl Client {
                         }
 
                         ClientCommand::DownloadAll => {
+                            // get index
                             let index = {
                                 let index = self.index.lock().unwrap();
                                 index.clone()
@@ -2359,6 +2383,8 @@ impl Client {
 
                                 self.jobs.insert(job_id, ClientTransferJob {
                                     progress: ClientTransferJobProgress::Requested,
+                                    file_hash_kind: file.hash_kind.clone(),
+                                    file_hash: file.hash.clone(),
                                     file_node_id: file.node_id,
                                     file_root: file.root.clone(),
                                     file_path: file.path.clone(),
@@ -2385,6 +2411,16 @@ impl Client {
                             }).expect("failed to send ClientModelUpdate::UpdateTransferJobs");
                         }
                         ClientCommand::DownloadPartial { items } => {
+                            // get index
+                            let index = {
+                                let index = self.index.lock().unwrap();
+                                index.clone()
+                            };
+                            let Some(index) = index else {
+                                log::error!("DownloadPartial: no index available, cannot download");
+                                continue;
+                            };
+
                             // create jobs and download request items
                             let download_requests = items.into_iter().flat_map(|item| {
                                 let Ok(file_node_id) = item.node_id.parse() else {
@@ -2392,10 +2428,18 @@ impl Client {
                                     return None;
                                 };
 
+                                // find item in index
+                                let Some(index_item) = index.iter().find(|i| i.node_id == file_node_id && i.root == item.root && i.path == item.path) else {
+                                    log::warn!("DownloadPartial: item not found in index: {item:?}");
+                                    return None;
+                                };
+
                                 let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
 
                                 self.jobs.insert(job_id, ClientTransferJob {
                                     progress: ClientTransferJobProgress::Requested,
+                                    file_hash_kind: index_item.hash_kind.clone(),
+                                    file_hash: index_item.hash.clone(),
                                     file_node_id,
                                     file_root: item.root.clone(),
                                     file_path: item.path.clone(),

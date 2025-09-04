@@ -146,7 +146,7 @@ impl Core {
                 }
             };
 
-            let db = Database::open_file(&data_dir.join("musicopy.db"))
+            let db = Database::open_file(&data_dir.join("musicopy_v1.db"))
                 .context("failed to open database")?;
 
             let key_path = data_dir.join("secret_key");

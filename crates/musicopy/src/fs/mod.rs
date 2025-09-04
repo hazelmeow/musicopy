@@ -57,6 +57,14 @@ impl TreePath {
         }
     }
 
+    pub fn root(&self) -> &str {
+        &self.tree
+    }
+
+    pub fn path(&self) -> Cow<'_, str> {
+        self.path.to_string_lossy()
+    }
+
     pub fn push(&mut self, component: &str) {
         self.path.push(component);
     }

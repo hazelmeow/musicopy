@@ -18,6 +18,7 @@ pub struct File {
     pub node_id: NodeId,
     pub root: String,
     pub path: String,
+    pub local_tree: String,
     pub local_path: String,
 }
 
@@ -26,6 +27,7 @@ pub struct InsertFile<'a> {
     pub hash: &'a [u8],
     pub root: &'a str,
     pub path: &'a str,
+    pub local_tree: &'a str,
     pub local_path: &'a str,
 }
 
@@ -80,6 +82,7 @@ impl Database {
                 node_id TEXT NOT NULL,
                 root TEXT NOT NULL,
                 path TEXT NOT NULL,
+                local_tree TEXT NOT NULL,
                 local_path TEXT NOT NULL,
                 UNIQUE (node_id, root, path)
             )",
@@ -183,7 +186,7 @@ impl Database {
         )?;
 
         {
-            let mut stmt = tx.prepare("INSERT INTO files (hash_kind, hash, node_id, root, path, local_path) VALUES (?, ?, ?, ?, ?, ?)")?;
+            let mut stmt = tx.prepare("INSERT INTO files (hash_kind, hash, node_id, root, path, local_tree, local_path) VALUES (?, ?, ?, ?, ?, ?, ?)")?;
             for file in iter {
                 stmt.execute((
                     file.hash_kind,
@@ -191,6 +194,7 @@ impl Database {
                     node_id_to_string(&local_node_id),
                     file.root,
                     file.path,
+                    file.local_tree,
                     file.local_path,
                 ))?;
             }
@@ -201,10 +205,34 @@ impl Database {
         Ok(())
     }
 
+    /// Insert a file from a remote node, updating the existing entry if it exists.
+    pub fn insert_remote_file<'a>(
+        &mut self,
+        remote_node_id: NodeId,
+        file: InsertFile<'a>,
+    ) -> anyhow::Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO files (hash_kind, hash, node_id, root, path, local_tree, local_path) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(node_id, root, path) DO UPDATE SET hash_kind = excluded.hash_kind, hash = excluded.hash, local_tree = excluded.local_tree, local_path = excluded.local_path"
+        )?;
+
+        stmt.execute((
+            file.hash_kind,
+            file.hash,
+            node_id_to_string(&remote_node_id),
+            file.root,
+            file.path,
+            file.local_tree,
+            file.local_path,
+        ))?;
+
+        Ok(())
+    }
+
     pub fn get_files(&self) -> anyhow::Result<Vec<File>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files")
+            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_tree, local_path FROM files")
             .expect("should prepare statement");
 
         stmt.query_and_then([], |row| {
@@ -220,7 +248,8 @@ impl Database {
                 node_id,
                 root: row.get(4)?,
                 path: row.get(5)?,
-                local_path: row.get(6)?,
+                local_tree: row.get(6)?,
+                local_path: row.get(7)?,
             })
         })
         .expect("should bind parameters")
@@ -230,7 +259,7 @@ impl Database {
     pub fn get_files_by_node_id(&self, node_id: NodeId) -> anyhow::Result<Vec<File>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE node_id = ?")
+            .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_tree, local_path FROM files WHERE node_id = ?")
             .expect("should prepare statement");
 
         let node_id = node_id_to_string(&node_id);
@@ -247,7 +276,8 @@ impl Database {
                 node_id,
                 root: row.get(4)?,
                 path: row.get(5)?,
-                local_path: row.get(6)?,
+                local_tree: row.get(6)?,
+                local_path: row.get(7)?,
             })
         })
         .expect("should bind parameters")
@@ -262,7 +292,7 @@ impl Database {
     ) -> anyhow::Result<Option<File>> {
         let mut stmt = self
         .conn
-        .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE node_id = ? AND root = ? AND path = ?")
+        .prepare("SELECT id, hash_kind, hash, node_id, root, path, local_tree, local_path FROM files WHERE node_id = ? AND root = ? AND path = ?")
         .expect("should prepare statement");
 
         let node_id = node_id_to_string(&node_id);
@@ -279,7 +309,8 @@ impl Database {
                 node_id,
                 root: row.get(4)?,
                 path: row.get(5)?,
-                local_path: row.get(6)?,
+                local_tree: row.get(6)?,
+                local_path: row.get(7)?,
             })
         })
         .expect("should bind parameters")
@@ -297,7 +328,7 @@ impl Database {
 
         let placeholders = std::iter::repeat_n("(?, ?, ?)", keys.len()).join(", ");
         let sql = format!(
-            "SELECT id, hash_kind, hash, node_id, root, path, local_path FROM files WHERE (node_id, root, path) IN ({placeholders})"
+            "SELECT id, hash_kind, hash, node_id, root, path, local_tree, local_path FROM files WHERE (node_id, root, path) IN ({placeholders})"
         );
 
         let mut stmt = self.conn.prepare(&sql).expect("should prepare statement");
@@ -320,7 +351,8 @@ impl Database {
                 node_id,
                 root: row.get(4)?,
                 path: row.get(5)?,
-                local_path: row.get(6)?,
+                local_tree: row.get(6)?,
+                local_path: row.get(7)?,
             })
         })
         .expect("should bind parameters")
