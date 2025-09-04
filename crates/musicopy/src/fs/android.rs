@@ -50,6 +50,38 @@ pub fn create_dir_all(path: &TreePath) -> anyhow::Result<String> {
         .context("Uri::to_string failed")
 }
 
+/// Check if a file exists at the given path.
+pub fn exists(path: &TreePath) -> anyhow::Result<bool> {
+    if path.is_empty() {
+        anyhow::bail!("path is empty");
+    }
+
+    let vm = get_vm();
+    let mut env = vm.attach_current_thread()?;
+
+    let mut segments = path
+        .path
+        .components()
+        .map(|s| s.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>();
+
+    let Some(filename) = segments.pop() else {
+        anyhow::bail!("path is empty");
+    };
+
+    let tree_uri = Uri::parse(&mut env, &path.tree).context("Uri::parse failed")?;
+    let parent_uri = resolve_dirs(&mut env, &tree_uri, segments, false)
+        .context("failed to resolve parent directories")?;
+
+    let content_resolver = ContentResolver::get(&mut env).context("ContentResolver::get failed")?;
+
+    let child_uri = content_resolver
+        .find_child(&mut env, &tree_uri, &parent_uri, &filename)
+        .context("ContentResolver::find_child failed")?;
+
+    Ok(child_uri.is_some())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessMode {
     /// Attempt to open the file, failing if it doesn't exist.

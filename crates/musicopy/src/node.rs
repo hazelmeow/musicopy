@@ -406,6 +406,16 @@ impl Node {
         node.update_model(NodeModelUpdate::UpdateTrustedNodes);
         node.update_model(NodeModelUpdate::UpdateRecentServers);
 
+        // spawn task to check downloaded remote files
+        tokio::spawn({
+            let node = node.clone();
+            async move {
+                if let Err(e) = node.check_remote_files().await {
+                    error!("Node::new: failed to check remote files: {e:#}");
+                }
+            }
+        });
+
         // spawn metrics polling task
         tokio::spawn({
             let node = node.clone();
@@ -1058,6 +1068,42 @@ impl Node {
                 })
                 .expect("failed to send NodeEvent::ClientClosed");
         });
+
+        Ok(())
+    }
+
+    /// Check if stored remote files still exist locally.
+    async fn check_remote_files(self: &Arc<Self>) -> anyhow::Result<()> {
+        // get remote files by getting files where node ID is not the local node ID
+        let remote_files = {
+            let db = self.db.lock().unwrap();
+            db.get_files_by_ne_node_id(self.router.endpoint().node_id())?
+        };
+
+        // check if files exist
+        let mut missing_files = Vec::new();
+        for remote_file in remote_files {
+            let path = TreePath::new(
+                remote_file.local_tree.clone(),
+                remote_file.local_path.into(),
+            );
+
+            if !path.exists() {
+                missing_files.push((remote_file.node_id, remote_file.root, remote_file.path));
+            }
+        }
+
+        // remove from db
+        if !missing_files.is_empty() {
+            log::warn!(
+                "removing {} missing remote files from database",
+                missing_files.len()
+            );
+            {
+                let db = self.db.lock().unwrap();
+                db.remove_files_by_node_root_path(missing_files.into_iter())?;
+            }
+        }
 
         Ok(())
     }

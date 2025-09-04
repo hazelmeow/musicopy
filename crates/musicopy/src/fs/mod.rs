@@ -103,6 +103,19 @@ impl TreePath {
         p.push(&self.path);
         p
     }
+
+    pub fn exists(&self) -> bool {
+        #[cfg(not(target_os = "android"))]
+        {
+            let mut p = PathBuf::from(&self.tree);
+            p.push(&self.path);
+            p.exists()
+        }
+        #[cfg(target_os = "android")]
+        {
+            android::exists(self).unwrap_or(false)
+        }
+    }
 }
 
 pub struct TreeFile {
