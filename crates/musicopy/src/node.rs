@@ -945,18 +945,18 @@ impl Node {
                                         .unwrap_or(false);
 
                                     IndexItemModel {
-                                    node_id: node_id.to_string(),
+                                        node_id: node_id.to_string(),
                                         root: item.root,
                                         path: item.path,
 
                                         hash_kind: item.hash_kind,
                                         hash: item.hash,
 
-                                    file_size: match item.file_size {
-                                        FileSize::Unknown => FileSizeModel::Unknown,
-                                        FileSize::Estimated(n) => FileSizeModel::Estimated(n),
-                                        FileSize::Actual(n) => FileSizeModel::Actual(n),
-                                    },
+                                        file_size: match item.file_size {
+                                            FileSize::Unknown => FileSizeModel::Unknown,
+                                            FileSize::Estimated(n) => FileSizeModel::Estimated(n),
+                                            FileSize::Actual(n) => FileSizeModel::Actual(n),
+                                        },
 
                                         downloaded,
                                     }
@@ -2438,26 +2438,39 @@ impl Client {
                             };
 
                             // create jobs and download request items
-                            let download_requests = index.clone().into_iter().map(|file| {
-                                let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+                            let download_requests = {
+                                let db = self.db.lock().unwrap();
+                                index.into_iter().flat_map(|file| {
+                                    // check if file is downloaded
+                                    let downloaded = db
+                                        .exists_file_by_node_root_path(
+                                            file.node_id, &file.root, &file.path,
+                                        )
+                                        .unwrap_or(false);
+                                    if downloaded {
+                                        return None;
+                                    }
 
-                                self.jobs.insert(job_id, ClientTransferJob {
-                                    progress: ClientTransferJobProgress::Requested,
-                                    file_hash_kind: file.hash_kind.clone(),
-                                    file_hash: file.hash.clone(),
-                                    file_node_id: file.node_id,
-                                    file_root: file.root.clone(),
-                                    file_path: file.path.clone(),
-                                });
+                                    let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
 
-                                DownloadItem {
-                                    job_id,
+                                    self.jobs.insert(job_id, ClientTransferJob {
+                                        progress: ClientTransferJobProgress::Requested,
+                                        file_hash_kind: file.hash_kind.clone(),
+                                        file_hash: file.hash.clone(),
+                                        file_node_id: file.node_id,
+                                        file_root: file.root.clone(),
+                                        file_path: file.path.clone(),
+                                    });
 
-                                    node_id: file.node_id,
-                                    root: file.root,
-                                    path: file.path,
-                                }
-                            }).collect::<Vec<_>>();
+                                    Some(DownloadItem {
+                                        job_id,
+
+                                        node_id: file.node_id,
+                                        root: file.root,
+                                        path: file.path,
+                                    })
+                                }).collect::<Vec<_>>()
+                            };
 
                             // send download request
                             send.send(ClientMessage::Download(download_requests))
