@@ -1,6 +1,7 @@
 package app.musicopy.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,16 +13,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.selection.triStateToggleable
 import androidx.compose.material3.Button
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TriStateCheckbox
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -30,23 +37,34 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import musicopy_root.musicopy.generated.resources.Res
-import musicopy_root.musicopy.generated.resources.chevron_forward_24px
-import org.jetbrains.compose.resources.painterResource
-import uniffi.musicopy.ClientModel
-import uniffi.musicopy.DownloadPartialItemModel
-import uniffi.musicopy.FileSizeModel
-import uniffi.musicopy.IndexItemModel
 import app.musicopy.formatSize
 import app.musicopy.mockClientModel
 import app.musicopy.ui.components.DetailBox
 import app.musicopy.ui.components.DetailItem
 import app.musicopy.ui.components.SectionHeader
 import app.musicopy.ui.components.TopBar
+import musicopy_root.musicopy.generated.resources.Res
+import musicopy_root.musicopy.generated.resources.arrow_downward_24px
+import musicopy_root.musicopy.generated.resources.chevron_forward_24px
+import org.jetbrains.compose.resources.painterResource
+import uniffi.musicopy.ClientModel
+import uniffi.musicopy.DownloadPartialItemModel
+import uniffi.musicopy.FileSizeModel
+import uniffi.musicopy.IndexItemModel
+import kotlin.math.floor
+import kotlin.math.max
 
 @Composable
 fun PreTransferScreen(
@@ -405,62 +423,63 @@ internal fun buildNodeSizes(
     return map
 }
 
+internal enum class RowState {
+    None,
+    Selected,
+    Downloaded,
+    Indeterminate,
+}
+
 /**
- * Gets the `ToggleableState` of a node in the file tree.
+ * Gets the `RowState` of a node in the file tree.
  *
- * If the node is a leaf (file), the state is on if selected and off if not selected.
+ * If the node is a leaf (file), then:
+ *  - If it is downloaded, the state is Downloaded
+ *  - If it is selected, the state is Selected
+ *  - Otherwise, the state is None
  * If the node is a branch, then:
  *  - If it has no children, it is null
- *  - If any child is indeterminate, it is indeterminate
- *  - If one child is on and another is off, it is indeterminate
- *  - If any child is on, it is on (note that all children are on)
- *  - Otherwise, it is off
+ *  - If all children are Downloaded, it is Downloaded
+ *  - If all children are Selected, it is Selected
+ *  - If all children are None, it is None
+ *  - Otherwise, it is Indeterminate
  */
 internal fun getNodeState(
     node: TreeNode,
     isSelected: (IndexItemModel) -> Boolean,
-): ToggleableState? {
+): RowState? {
     return node.leaf?.let {
         // leaf node
-        if (isSelected(it)) {
-            ToggleableState.On
+        if (it.downloaded) {
+            RowState.Downloaded
+        } else if (isSelected(it)) {
+            RowState.Selected
         } else {
-            ToggleableState.Off
+            RowState.None
         }
     } ?: run {
         // internal node
-        var hasOn = false
-        var hasOff = false
-        for (child in node.children) {
-            val childState = getNodeState(child, isSelected)
-            when (childState) {
-                ToggleableState.On -> {
-                    hasOn = true
-                }
+        if (node.children.isEmpty()) {
+            return null
+        }
 
-                ToggleableState.Off -> {
-                    hasOff = true
-                }
-
-                ToggleableState.Indeterminate -> {
-                    return ToggleableState.Indeterminate
-                }
-
-                null -> {}
-            }
-
-            if (hasOn && hasOff) {
-                return ToggleableState.Indeterminate
+        val allChildrenHaveState = { state: RowState ->
+            node.children.all { child ->
+                getNodeState(
+                    child,
+                    isSelected
+                ) == state
             }
         }
 
-        if (hasOn) {
-            ToggleableState.On
-        } else if (hasOff) {
-            ToggleableState.Off
+        if (allChildrenHaveState(RowState.Downloaded)) {
+            RowState.Downloaded
+        } else if (allChildrenHaveState(RowState.Selected)) {
+            RowState.Selected
+        } else if (allChildrenHaveState(RowState.None)) {
+            RowState.None
         } else {
-            // nothing
-            null
+            RowState.Indeterminate
         }
     }
 }
@@ -492,24 +511,26 @@ internal fun LazyListScope.renderNode(
     keyPath: String = "",
     indent: Int = 0,
 ) {
-    val selectedState = getNodeState(node, isSelected)
+    val rowState = getNodeState(node, isSelected)
 
     val onSelectThis = node.leaf?.let {
-        // toggle selected item
-        { onSelect(it, !isSelected(it)) }
+        {
+            // toggle selected item
+            onSelect(it, !isSelected(it))
+        }
     } ?: run {
         {
             // set children based on current state
-            when (selectedState) {
-                ToggleableState.On, ToggleableState.Indeterminate -> {
+            when (rowState) {
+                RowState.Selected, RowState.Indeterminate -> {
                     onSelectRecursive(node, onSelect, false)
                 }
 
-                ToggleableState.Off -> {
+                RowState.None -> {
                     onSelectRecursive(node, onSelect, true)
                 }
 
-                null -> {}
+                RowState.Downloaded, null -> {}
             }
         }
     }
@@ -519,7 +540,7 @@ internal fun LazyListScope.renderNode(
             node,
             isExpanded = isExpanded(node),
             onExpand = { onExpand(node) },
-            selectedState = selectedState,
+            rowState = rowState,
             onSelect = onSelectThis,
             fileSize = nodeSizes.getOrElse(node, defaultValue = { FileSizeModel.Unknown }),
             indent = indent,
@@ -542,12 +563,102 @@ internal fun LazyListScope.renderNode(
     }
 }
 
+private val CheckboxStateLayerSize = 40.dp
+private val CheckboxDefaultPadding = 2.dp
+private val CheckboxSize = 20.dp
+private val StrokeWidth = 2.dp
+private val RadiusSize = 2.dp
+
+/**
+ * Extracted M3 checkbox component with the check replaced by a down arrow.
+ * Doesn't animate.
+ */
+@Composable
+internal fun DownloadedCheckbox() {
+    val state = ToggleableState.On
+    val enabled = false
+
+    val toggleableModifier = Modifier.triStateToggleable(
+        state = state,
+        onClick = {},
+        enabled = enabled,
+        role = Role.Checkbox,
+        interactionSource = null,
+        indication = ripple(
+            bounded = false,
+            radius = CheckboxStateLayerSize / 2
+        )
+    )
+
+    val colors = CheckboxDefaults.colors()
+    val checkColor = colors.checkedCheckmarkColor
+    val boxColor = colors.disabledCheckedBoxColor
+    val borderColor = colors.disabledBorderColor
+
+    val arrowPainter = painterResource(Res.drawable.arrow_downward_24px)
+
+    Canvas(
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .then(toggleableModifier)
+            .padding(CheckboxDefaultPadding)
+            .wrapContentSize(Alignment.Center)
+            .requiredSize(CheckboxSize)
+    ) {
+        val strokeWidthPx = floor(StrokeWidth.toPx())
+        drawBox(
+            boxColor = boxColor,
+            borderColor = borderColor,
+            radius = RadiusSize.toPx(),
+            strokeWidth = strokeWidthPx
+        )
+
+        with(arrowPainter) {
+            draw(size)
+        }
+    }
+}
+
+private fun DrawScope.drawBox(
+    boxColor: Color,
+    borderColor: Color,
+    radius: Float,
+    strokeWidth: Float,
+) {
+    val halfStrokeWidth = strokeWidth / 2.0f
+    val stroke = Stroke(strokeWidth)
+    val checkboxSize = size.width
+    if (boxColor == borderColor) {
+        drawRoundRect(
+            boxColor,
+            size = Size(checkboxSize, checkboxSize),
+            cornerRadius = CornerRadius(radius),
+            style = Fill
+        )
+    } else {
+        drawRoundRect(
+            boxColor,
+            topLeft = Offset(strokeWidth, strokeWidth),
+            size = Size(checkboxSize - strokeWidth * 2, checkboxSize - strokeWidth * 2),
+            cornerRadius = CornerRadius(max(0f, radius - strokeWidth)),
+            style = Fill
+        )
+        drawRoundRect(
+            borderColor,
+            topLeft = Offset(halfStrokeWidth, halfStrokeWidth),
+            size = Size(checkboxSize - strokeWidth, checkboxSize - strokeWidth),
+            cornerRadius = CornerRadius(radius - halfStrokeWidth),
+            style = stroke
+        )
+    }
+}
+
 @Composable
 internal fun TreeRow(
     node: TreeNode,
     isExpanded: Boolean,
     onExpand: () -> Unit,
-    selectedState: ToggleableState?,
+    rowState: RowState?,
     onSelect: () -> Unit,
     fileSize: FileSizeModel,
     indent: Int,
@@ -558,22 +669,39 @@ internal fun TreeRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clickable(onClick = {
-                if (node.children.isEmpty()) {
-                    onSelect()
-                } else {
-                    onExpand()
-                }
-            }),
+            .clickable(
+                onClick = {
+                    if (node.children.isEmpty()) {
+                        onSelect()
+                    } else {
+                        onExpand()
+                    }
+                },
+                // should be clickable if not downloaded or not leaf
+                enabled = (rowState != RowState.Downloaded) || (node.children.isNotEmpty())
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.width((indent * 24).dp))
 
-        TriStateCheckbox(
-            state = selectedState ?: ToggleableState.Off,
-            enabled = selectedState != null,
-            onClick = onSelect
-        )
+        if (rowState == RowState.Downloaded) {
+            DownloadedCheckbox()
+        } else {
+            val toggleableState = when (rowState) {
+                RowState.None -> ToggleableState.Off
+                RowState.Selected -> ToggleableState.On
+                RowState.Downloaded -> ToggleableState.On
+                RowState.Indeterminate -> ToggleableState.Indeterminate
+                null -> ToggleableState.Off
+            }
+            val enabled = rowState != null
+
+            TriStateCheckbox(
+                state = toggleableState,
+                enabled = enabled,
+                onClick = onSelect,
+            )
+        }
 
         Row(
             modifier = Modifier

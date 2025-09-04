@@ -245,6 +245,11 @@ fun mockClientModel(
             mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i"),
             mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j"),
             mockIndexItemModel(nodeId = nodeId, root = "five", basePath = "/a/b/c/d/e/f/g/h/i/j/k"),
+
+            // downloaded example
+            mockIndexItemModel(nodeId = nodeId, root = "six", basePath = "/a", downloaded = true),
+            mockIndexItemModel(nodeId = nodeId, root = "six", basePath = "/b", downloaded = true),
+            mockIndexItemModel(nodeId = nodeId, root = "six", basePath = "/b", downloaded = false),
         ),
         transferJobs = transferJobs
     )
@@ -256,6 +261,7 @@ fun mockIndexItemModel(
     nodeId: String = mockNodeId(),
     root: String = "library",
     basePath: String = "/a/b/c",
+    downloaded: Boolean = false,
 ): IndexItemModel {
     val itemCount = nextMockIndexItemCount++
 
@@ -279,6 +285,8 @@ fun mockIndexItemModel(
         hash = byteArrayOf(12, 34),
 
         fileSize = fileSize,
+
+        downloaded = downloaded,
     )
 }
 
