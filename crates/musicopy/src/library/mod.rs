@@ -482,9 +482,13 @@ impl Library {
                                 .count_files_by_root(self.local_node_id, &root.name)
                                 .expect("failed to count files"); // TODO
 
+                            // de-UNC paths on windows (\\?\C:\foo -> C:\foo)
+                            let path = PathBuf::from(root.path);
+                            let path = dunce::simplified(&path).to_string_lossy().to_string();
+
                             LibraryRootModel {
                                 name: root.name,
-                                path: root.path,
+                                path,
                                 num_files: count,
                             }
                         })
