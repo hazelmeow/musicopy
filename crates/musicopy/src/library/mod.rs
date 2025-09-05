@@ -332,9 +332,11 @@ impl Library {
                 // get path without root
                 let path = local_path
                     .strip_prefix(&root.path)
-                    .context("failed to strip root path prefix")?
-                    .to_string_lossy()
-                    .to_string();
+                    .context("failed to strip root path prefix")?;
+
+                // convert to slash path (replace backslashes on windows)
+                use path_slash::PathExt;
+                let path = path.to_slash_lossy().to_string();
 
                 anyhow::Result::Ok(ScanItem {
                     root: root.name.clone(),
