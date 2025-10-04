@@ -14,9 +14,9 @@ plugins {
     alias(libs.plugins.composeHotReload)
     alias(libs.plugins.serialization)
 
-    id("dev.gobley.cargo") version "0.2.0"
-    id("dev.gobley.rust") version "0.2.0"
-    id("dev.gobley.uniffi") version "0.2.0"
+    alias(libs.plugins.gobleyCargo)
+    alias(libs.plugins.gobleyRust)
+    alias(libs.plugins.gobleyUniffi)
     kotlin("plugin.atomicfu") version libs.versions.kotlin
 
     id("dev.hydraulic.conveyor") version "1.12"
@@ -167,15 +167,6 @@ compose.desktop {
     }
 }
 
-// HACK: disable rustup target add tasks
-project.gradle.taskGraph.whenReady {
-    project.tasks.forEach { task ->
-        if (task.name.contains("rustUpTargetAdd")) {
-            task.enabled = false
-        }
-    }
-}
-
 val gobleyRustVariant = when (System.getenv("GOBLEY_RUST_VARIANT")) {
     "release" -> gobley.gradle.Variant.Release
     "debug" -> gobley.gradle.Variant.Debug
@@ -184,6 +175,9 @@ val gobleyRustVariant = when (System.getenv("GOBLEY_RUST_VARIANT")) {
 val gobleyRustSkip = System.getenv("GOBLEY_RUST_SKIP") == "true"
 
 cargo {
+    // don't install rustup targets automatically
+    installTargetBeforeBuild = false
+
     packageDirectory = layout.projectDirectory.dir("../crates/musicopy")
 
     jvmVariant = gobleyRustVariant

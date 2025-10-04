@@ -43,12 +43,13 @@ import musicopy_root.musicopy.generated.resources.add_24px
 import musicopy_root.musicopy.generated.resources.cell_tower_24px
 import musicopy_root.musicopy.generated.resources.close_24px
 import musicopy_root.musicopy.generated.resources.folder_open_24px
-import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.painterResource
 import uniffi.musicopy.CoreException
 import uniffi.musicopy.LibraryModel
 import uniffi.musicopy.LibraryRootModel
 import uniffi.musicopy.pickFolder
+import kotlin.io.path.Path
+import kotlin.io.path.name
 
 @Composable
 fun LibraryWidget(
@@ -76,7 +77,7 @@ fun LibraryWidget(
                         return@launch
                     }
 
-                    dialogName = it.toPath(normalize = true).name
+                    dialogName = Path(it).normalize().name
                     addDialogState.visible = true
                 }
             } catch (e: CoreException) {
