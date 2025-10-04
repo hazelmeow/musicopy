@@ -68,6 +68,7 @@ import kotlin.math.max
 
 @Composable
 fun PreTransferScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     clientModel: ClientModel,
@@ -135,7 +136,8 @@ fun PreTransferScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -775,6 +777,7 @@ fun FileSizeModel.value(): ULong {
 @Composable
 fun PreTransferScreenSandbox() {
     PreTransferScreen(
+        snackbarHost = {},
         onShowNodeStatus = {},
 
         clientModel = mockClientModel(),

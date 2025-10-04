@@ -19,6 +19,7 @@ import uniffi.musicopy.ClientModel
 
 @Composable
 fun WaitingScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     clientModel: ClientModel,
@@ -31,7 +32,8 @@ fun WaitingScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),
@@ -60,8 +62,10 @@ fun WaitingScreen(
 @Composable
 fun WaitingScreenSandbox() {
     WaitingScreen(
+        snackbarHost = {},
         onShowNodeStatus = {},
+
         clientModel = mockClientModel(),
-        onCancel = {}
+        onCancel = {},
     )
 }

@@ -27,7 +27,9 @@ fun ScreenPreview(
 fun ConnectQRScreenPreview() {
     ScreenPreview {
         ConnectQRScreen(
+            snackbarHost = {},
             onShowNodeStatus = {},
+
             onSubmit = {},
             onCancel = {},
             isConnecting = false

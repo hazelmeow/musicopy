@@ -18,6 +18,7 @@ import app.musicopy.ui.components.TopBar
 
 @Composable
 fun DisconnectedScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     nodeId: String,
@@ -32,7 +33,8 @@ fun DisconnectedScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),
@@ -56,6 +58,7 @@ fun DisconnectedScreen(
 @Composable
 fun DisconnectedScreenSandbox() {
     DisconnectedScreen(
+        snackbarHost = {},
         onShowNodeStatus = {},
 
         nodeId = mockNodeId(),

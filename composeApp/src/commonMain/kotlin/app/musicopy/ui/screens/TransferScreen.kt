@@ -57,6 +57,7 @@ import uniffi.musicopy.TransferJobProgressModel
 
 @Composable
 fun TransferScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     clientModel: ClientModel,
@@ -86,7 +87,8 @@ fun TransferScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -348,7 +350,9 @@ internal fun formatJobSubtitle(job: TransferJobModel): String {
 @Composable
 fun TransferScreenSandbox() {
     TransferScreen(
+        snackbarHost = {},
         onShowNodeStatus = {},
+
         clientModel = mockClientModel(),
         onCancel = {}
     )

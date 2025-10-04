@@ -31,6 +31,7 @@ import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun ConnectManuallyScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     isConnecting: Boolean,
@@ -60,7 +61,8 @@ fun ConnectManuallyScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),
@@ -147,9 +149,11 @@ fun ConnectManuallyScreenSandbox() {
     var isConnecting by remember { mutableStateOf(false) }
 
     ConnectManuallyScreen(
+        onShowNodeStatus = {},
+        snackbarHost = {},
+
         isConnecting = isConnecting,
         onSubmit = { isConnecting = true },
         onCancel = { isConnecting = false },
-        onShowNodeStatus = {}
     )
 }

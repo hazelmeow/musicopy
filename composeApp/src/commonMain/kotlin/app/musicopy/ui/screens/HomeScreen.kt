@@ -53,6 +53,7 @@ import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun HomeScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     recentServers: List<RecentServerModel>,
@@ -65,7 +66,8 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopBar(title = "Musicopy", onShowNodeStatus = onShowNodeStatus)
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -283,6 +285,7 @@ fun HomeScreenSandbox() {
     }
 
     HomeScreen(
+        snackbarHost = {},
         onShowNodeStatus = {},
 
         recentServers = recentServers,

@@ -26,6 +26,7 @@ import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun ConnectQRScreen(
+    snackbarHost: @Composable () -> Unit,
     onShowNodeStatus: () -> Unit,
 
     isConnecting: Boolean,
@@ -39,7 +40,8 @@ fun ConnectQRScreen(
                 onShowNodeStatus = onShowNodeStatus,
                 onBack = onCancel
             )
-        }
+        },
+        snackbarHost = snackbarHost,
     ) { innerPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(8.dp),

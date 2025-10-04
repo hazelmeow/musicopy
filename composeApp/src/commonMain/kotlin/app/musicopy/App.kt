@@ -2,6 +2,9 @@ package app.musicopy
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,8 +53,31 @@ fun App(
     val directoryPicker = remember { DirectoryPicker(platformActivityContext) }
 
     val scope = rememberCoroutineScope()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarHost = @Composable { SnackbarHost(snackbarHostState) }
+
     var connectingTo by remember { mutableStateOf<String?>(null) }
     val isConnecting = connectingTo !== null
+
+    val showErrorSnackbar = fun(message: String, e: CoreException) {
+        // TODO: app setting
+        val detailed = true
+
+        scope.launch {
+            if (detailed) {
+                snackbarHostState.showSnackbar(
+                    message = message + "\n\nError: ${e.message()}",
+                    duration = SnackbarDuration.Indefinite,
+                    withDismissAction = true
+                )
+            } else {
+                snackbarHostState.showSnackbar(
+                    message = message
+                )
+            }
+        }
+    }
 
     val onConnect = fun(nodeId: String) {
         // only connect to one node at a time
@@ -72,7 +98,7 @@ fun App(
                     navController.navigate(Waiting(nodeId = nodeId))
                 }
             } catch (e: CoreException) {
-                // TODO
+                showErrorSnackbar("Failed to connect", e)
                 println("error during connect: $e")
             } finally {
                 connectingTo = null
@@ -124,6 +150,7 @@ fun App(
         ) {
             composable<Home> {
                 HomeScreen(
+                    snackbarHost = snackbarHost,
                     onShowNodeStatus = onShowNodeStatus,
 
                     recentServers = nodeModel.recentServers,
@@ -144,6 +171,7 @@ fun App(
             }
             composable<ConnectQR> {
                 ConnectQRScreen(
+                    snackbarHost = snackbarHost,
                     onShowNodeStatus = onShowNodeStatus,
 
                     isConnecting = isConnecting,
@@ -156,6 +184,7 @@ fun App(
             }
             composable<ConnectManually> {
                 ConnectManuallyScreen(
+                    snackbarHost = snackbarHost,
                     onShowNodeStatus = onShowNodeStatus,
 
                     isConnecting = isConnecting,
@@ -196,6 +225,7 @@ fun App(
 
                 clientModel?.let { clientModel ->
                     WaitingScreen(
+                        snackbarHost = snackbarHost,
                         onShowNodeStatus = onShowNodeStatus,
 
                         clientModel = clientModel,
@@ -232,6 +262,7 @@ fun App(
                     )
 
                     PreTransferScreen(
+                        snackbarHost = snackbarHost,
                         onShowNodeStatus = onShowNodeStatus,
 
                         clientModel = clientModel,
@@ -286,6 +317,7 @@ fun App(
                 // TODO: handle null better, redirect to error screen?
                 if (clientModel != null) {
                     TransferScreen(
+                        snackbarHost = snackbarHost,
                         onShowNodeStatus = onShowNodeStatus,
 
                         clientModel = clientModel,
@@ -301,6 +333,7 @@ fun App(
                 val route: Disconnected = backStackEntry.toRoute()
                 val nodeId = route.nodeId
                 DisconnectedScreen(
+                    snackbarHost = snackbarHost,
                     onShowNodeStatus = onShowNodeStatus,
 
                     nodeId = nodeId,
