@@ -192,7 +192,7 @@ private fun AboutDialog(
                             }
                             append("  ⋅  ")
                             withUrl(
-                                "https://github.com/hazelmeow/musicopy",
+                                "https://github.com/fractalbeauty/musicopy",
                             ) {
                                 append("Source")
                             }
@@ -216,7 +216,7 @@ private fun AboutDialog(
                                 "Musicopy is available under the "
                             )
                             withUrl(
-                                "https://github.com/hazelmeow/musicopy/blob/main/LICENSE",
+                                "https://github.com/fractalbeauty/musicopy/blob/main/LICENSE",
                             ) {
                                 append("GNU AGPL, version 3")
                             }
