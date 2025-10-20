@@ -335,12 +335,12 @@ fun mockLibraryModel(
     return LibraryModel(
         localRoots = localRoots,
         transcodesDir = "~/.cache/musicopy/transcodes",
-        transcodesDirSize = FileSizeModel.Actual(534_000_000u),
-        transcodeCountWaiting = if (transcoding) CounterModel(27u + 8u) else CounterModel(0u),
-        transcodeCountQueued = if (transcoding) CounterModel(27u) else CounterModel(0u),
-        transcodeCountInprogress = if (transcoding) CounterModel(8u) else CounterModel(0u),
-        transcodeCountReady = if (transcoding) CounterModel(143u) else CounterModel(0u),
-        transcodeCountFailed = CounterModel(0u),
+        transcodesDirSize = FileSizeModel.Actual(534_000_000uL),
+        transcodeCountWaiting = if (transcoding) CounterModel(27uL + 8uL) else CounterModel(0uL),
+        transcodeCountQueued = if (transcoding) CounterModel(27uL) else CounterModel(0uL),
+        transcodeCountInprogress = if (transcoding) CounterModel(8uL) else CounterModel(0uL),
+        transcodeCountReady = if (transcoding) CounterModel(143uL) else CounterModel(0uL),
+        transcodeCountFailed = CounterModel(0uL),
         transcodePolicy = TranscodePolicy.IF_REQUESTED
     )
 }
